@@ -202,3 +202,7 @@ python -m doc_reader notes.md --dry-run --verbose
 
 - `.doc` (legacy Word) is not supported yet; convert to `.docx` first.
 - PDF quality depends on extractable text in the file (scanned PDFs need OCR first).
+
+## Contributing
+
+Contributions are welcome. Please see [CONTRIBUTING.md](CONTRIBUTING.md) for setup, PR guidelines, and security reporting.

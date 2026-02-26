@@ -1,0 +1,80 @@
+name: Bug Report
+description: Report a reproducible problem in doc-reader
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this issue. Please provide enough detail for someone else to reproduce it.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: The tray app crashes when I click Start after selecting a PDF.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include exact steps, file type, and chosen settings.
+      placeholder: |
+        1. Launch with ./run-doc-reader
+        2. Select a .pdf file
+        3. Choose voice "System • Samantha"
+        4. Click Start
+        5. Observe crash
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Tray app (PySide6)
+        - CLI
+        - Extraction (PDF/DOCX/TXT/MD)
+        - Speech backend (macsay/pyttsx3/elevenlabs)
+        - Startup/Services scripts
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS and version
+      placeholder: macOS 14.7, Ubuntu 24.04, etc.
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.11.9"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or tracebacks
+      description: Paste any `[doc-reader]` log lines or error output.
+      render: shell
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I removed any sensitive data (API keys, tokens, personal files).
+          required: true

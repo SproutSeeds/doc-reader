@@ -1,0 +1,51 @@
+name: Feature Request
+description: Suggest an idea to improve doc-reader
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Please explain the problem and the value of this feature.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What pain point are you facing?
+      placeholder: I cannot quickly switch between recent documents in the tray UI.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior you'd like.
+      placeholder: Add a recent files dropdown in the tray panel with one-click restart.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workaround or alternative approach?
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Tray app (PySide6)
+        - CLI
+        - Speech backend
+        - Extraction/chunking/narration
+        - Docs or developer tooling
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and feature requests.
+          required: true
