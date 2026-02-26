@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVICE_NAME="Read with Doc Reader.workflow"
+SERVICE_PATH="$HOME/Library/Services/$SERVICE_NAME"
+INFO_PLIST="$SERVICE_PATH/Contents/Info.plist"
+WFLOW_PLIST="$SERVICE_PATH/Contents/Resources/document.wflow"
+TEMPLATE="/System/Library/Services/Show Map.workflow"
+HELPER="$HOME/.doc-reader-managed/read-selection-service.sh"
+PLISTBUDDY="/usr/libexec/PlistBuddy"
+
+if [[ ! -x "$HELPER" ]]; then
+  echo "[doc-reader] Missing helper: $HELPER"
+  echo "[doc-reader] Run ./enable-startup first."
+  exit 1
+fi
+
+mkdir -p "$HOME/Library/Services"
+rm -rf "$SERVICE_PATH"
+cp -R "$TEMPLATE" "$SERVICE_PATH"
+rm -rf "$SERVICE_PATH/Contents/_CodeSignature" "$SERVICE_PATH/Contents/QuickLook"
+
+"$PLISTBUDDY" -c "Set :CFBundleIdentifier com.docreader.services.readwithdocreader" "$INFO_PLIST"
+"$PLISTBUDDY" -c "Set :CFBundleName Read with Doc Reader" "$INFO_PLIST"
+"$PLISTBUDDY" -c "Set :CFBundleShortVersionString 1.0" "$INFO_PLIST"
+"$PLISTBUDDY" -c "Delete :NSServices:0:NSRequiredContext" "$INFO_PLIST" >/dev/null 2>&1 || true
+"$PLISTBUDDY" -c "Set :NSServices:0:NSMenuItem:default Read with Doc Reader" "$INFO_PLIST"
+"$PLISTBUDDY" -c "Set :NSServices:0:NSSendTypes:0 public.utf8-plain-text" "$INFO_PLIST"
+"$PLISTBUDDY" -c "Set :NSServices:0:NSMessage runWorkflowAsService" "$INFO_PLIST"
+
+"$PLISTBUDDY" -c "Set :actions:0:action:ActionParameters:shell /bin/zsh" "$WFLOW_PLIST"
+"$PLISTBUDDY" -c "Set :actions:0:action:ActionParameters:inputMethod 0" "$WFLOW_PLIST"
+"$PLISTBUDDY" -c "Set :actions:0:action:ActionParameters:COMMAND_STRING $HELPER" "$WFLOW_PLIST"
+"$PLISTBUDDY" -c "Set :workflowMetaData:serviceInputTypeIdentifier com.apple.Automator.text" "$WFLOW_PLIST"
+"$PLISTBUDDY" -c "Set :workflowMetaData:serviceOutputTypeIdentifier com.apple.Automator.nothing" "$WFLOW_PLIST"
+"$PLISTBUDDY" -c "Set :workflowMetaData:serviceProcessesInput 1" "$WFLOW_PLIST"
+"$PLISTBUDDY" -c "Set :workflowMetaData:workflowTypeIdentifier com.apple.Automator.servicesMenu" "$WFLOW_PLIST"
+
+/usr/bin/plutil -convert binary1 "$INFO_PLIST" >/dev/null 2>&1 || true
+/usr/bin/plutil -convert binary1 "$WFLOW_PLIST" >/dev/null 2>&1 || true
+
+touch "$SERVICE_PATH"
+/System/Library/CoreServices/pbs -flush >/dev/null 2>&1 || true
+
+echo "[doc-reader] Installed Services item: Read with Doc Reader"
+echo "[doc-reader] Use it from right-click menu -> Services -> Read with Doc Reader"
+echo "[doc-reader] If it does not appear immediately, reopen the target app."

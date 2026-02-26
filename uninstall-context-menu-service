@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVICE_PATH="$HOME/Library/Services/Read with Doc Reader.workflow"
+
+if [[ -e "$SERVICE_PATH" ]]; then
+  rm -rf "$SERVICE_PATH"
+  /System/Library/CoreServices/pbs -flush >/dev/null 2>&1 || true
+  echo "[doc-reader] Removed Services item: Read with Doc Reader"
+  echo "[doc-reader] Reopen apps if the menu item still appears temporarily."
+  exit 0
+fi
+
+echo "[doc-reader] Services item is not installed."

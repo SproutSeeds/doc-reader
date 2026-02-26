@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LABEL="com.docreader.tray"
+PLIST_DIR="$HOME/Library/LaunchAgents"
+PLIST_PATH="$PLIST_DIR/$LABEL.plist"
+LOG_DIR="$HOME/Library/Logs"
+APP_DIR="$HOME/.doc-reader-managed"
+RUNNER="$APP_DIR/run-doc-reader"
+
+if [[ ! -x "$SCRIPT_DIR/run-doc-reader" ]]; then
+  echo "[doc-reader] $SCRIPT_DIR/run-doc-reader is missing or not executable." >&2
+  exit 1
+fi
+if [[ ! -x "$SCRIPT_DIR/read-selection-service.sh" ]]; then
+  echo "[doc-reader] $SCRIPT_DIR/read-selection-service.sh is missing or not executable." >&2
+  exit 1
+fi
+
+# Install a managed copy outside ~/Documents so launchd can execute it reliably.
+mkdir -p "$APP_DIR"
+cp "$SCRIPT_DIR/run-doc-reader" "$APP_DIR/run-doc-reader"
+chmod +x "$APP_DIR/run-doc-reader"
+cp "$SCRIPT_DIR/read-selection-service.sh" "$APP_DIR/read-selection-service.sh"
+chmod +x "$APP_DIR/read-selection-service.sh"
+cp "$SCRIPT_DIR/requirements.txt" "$APP_DIR/requirements.txt"
+rm -rf "$APP_DIR/doc_reader"
+cp -R "$SCRIPT_DIR/doc_reader" "$APP_DIR/doc_reader"
+
+# Ensure env/deps are ready before launchctl starts it.
+"$RUNNER" --prepare-only
+
+mkdir -p "$PLIST_DIR" "$LOG_DIR"
+
+cat > "$PLIST_PATH" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>$LABEL</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>$RUNNER</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/doc-reader-tray.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/doc-reader-tray.err.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>$APP_DIR</string>
+  </dict>
+</plist>
+PLIST
+
+if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
+  launchctl enable "gui/$UID/$LABEL" >/dev/null 2>&1 || true
+  launchctl kickstart -k "gui/$UID/$LABEL"
+else
+  launchctl bootstrap "gui/$UID" "$PLIST_PATH"
+  launchctl enable "gui/$UID/$LABEL"
+  launchctl kickstart -k "gui/$UID/$LABEL"
+fi
+
+echo "[doc-reader] Startup enabled."
+echo "[doc-reader] LaunchAgent: $PLIST_PATH"
+echo "[doc-reader] Managed install: $APP_DIR"
+echo "[doc-reader] It will auto-start at login and should now be running."
