@@ -1,5 +1,7 @@
 # doc-reader
 
+Maintained by SproutSeeds. Research stewardship: Fractal Research Group ([frg.earth](https://frg.earth)).
+
 A local-first streaming document reader for `.pdf`, `.docx`, `.txt`, and `.md` files.
 
 It is designed to start speaking quickly from the first chunk, then keep playback continuous by preparing later chunks in the background.
