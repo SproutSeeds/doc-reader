@@ -1,0 +1,258 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" role="img" aria-labelledby="title desc">
+  <title id="title">Read Docs terminal workflow animation</title>
+  <desc id="desc">Text is highlighted in a terminal, then the Services menu opens and Read with Doc Reader is selected.</desc>
+  <style>
+    svg {
+      background: #f2eee7;
+      color: #f5f5f4;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .terminal {
+      fill: #1f1f1f;
+      stroke: #0b0b0b;
+      stroke-width: 2;
+      filter: drop-shadow(0 18px 24px rgb(15 18 23 / .2));
+    }
+
+    .titlebar {
+      fill: #2c2c2c;
+    }
+
+    .traffic-red { fill: #ff5f57; }
+    .traffic-yellow { fill: #ffbd2e; }
+    .traffic-green { fill: #28c840; }
+
+    .title {
+      fill: #bdbdbd;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0;
+    }
+
+    .mono {
+      font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      letter-spacing: 0;
+    }
+
+    .prompt {
+      fill: #56c7ff;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .line {
+      fill: #f4f4f5;
+      font-size: 18px;
+      font-weight: 650;
+    }
+
+    .dim {
+      fill: #8f8f8f;
+    }
+
+    .select {
+      animation: selection 12s ease-in-out infinite;
+      fill: #4f4f4f;
+      opacity: 0;
+    }
+
+    .menu,
+    .submenu {
+      animation: menu-show 12s ease-in-out infinite;
+      opacity: 0;
+    }
+
+    .submenu {
+      animation-name: submenu-show;
+    }
+
+    .menu-panel {
+      fill: #262626;
+      stroke: #595959;
+      stroke-width: 1;
+      filter: drop-shadow(0 10px 16px rgb(0 0 0 / .35));
+    }
+
+    .menu-rule {
+      stroke: #565656;
+      stroke-width: 1;
+    }
+
+    .menu-text {
+      fill: #f3f3f3;
+      font-size: 12px;
+      font-weight: 560;
+      letter-spacing: 0;
+    }
+
+    .menu-muted {
+      fill: #b8b8b8;
+    }
+
+    .menu-icon {
+      fill: none;
+      stroke: #d7d7d7;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 1.5;
+    }
+
+    .services-row {
+      animation: services-hover 12s ease-in-out infinite;
+      fill: #505050;
+      opacity: 0;
+    }
+
+    .read-row {
+      animation: read-hover 12s ease-in-out infinite;
+      fill: #1676d2;
+      opacity: 0;
+    }
+
+    .read-label {
+      animation: read-label 12s ease-in-out infinite;
+    }
+
+    .status {
+      animation: status-line 12s ease-in-out infinite;
+      opacity: 0;
+    }
+
+    .meter-bar {
+      animation: meter 12s ease-in-out infinite;
+      fill: #56c7ff;
+      opacity: 0;
+      transform-box: fill-box;
+      transform-origin: bottom;
+    }
+
+    .tap-ring {
+      animation: tap-ring 12s ease-out infinite;
+      fill: none;
+      opacity: 0;
+      stroke: #56c7ff;
+      stroke-width: 3;
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+
+    @keyframes selection {
+      0%, 8%, 88%, 100% { opacity: 0; }
+      12%, 82% { opacity: .92; }
+    }
+
+    @keyframes menu-show {
+      0%, 24%, 88%, 100% { opacity: 0; transform: translate(0, 8px); }
+      28%, 84% { opacity: 1; transform: translate(0, 0); }
+    }
+
+    @keyframes submenu-show {
+      0%, 42%, 88%, 100% { opacity: 0; transform: translate(0, 8px); }
+      47%, 84% { opacity: 1; transform: translate(0, 0); }
+    }
+
+    @keyframes services-hover {
+      0%, 36%, 88%, 100% { opacity: 0; }
+      41%, 84% { opacity: .88; }
+    }
+
+    @keyframes read-hover {
+      0%, 52%, 88%, 100% { opacity: 0; }
+      58%, 82% { opacity: 1; }
+    }
+
+    @keyframes read-label {
+      0%, 52%, 88%, 100% { fill: #f3f3f3; }
+      58%, 82% { fill: #ffffff; }
+    }
+
+    @keyframes status-line {
+      0%, 60%, 100% { opacity: 0; transform: translateY(8px); }
+      66%, 88% { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes meter {
+      0%, 62%, 100% { opacity: 0; transform: scaleY(.2); }
+      68% { opacity: 1; transform: scaleY(.55); }
+      72% { opacity: 1; transform: scaleY(1); }
+      76% { opacity: 1; transform: scaleY(.35); }
+      80% { opacity: 1; transform: scaleY(.82); }
+      86% { opacity: 1; transform: scaleY(.45); }
+    }
+
+    @keyframes tap-ring {
+      0%, 56%, 100% { opacity: 0; transform: scale(.3); }
+      60% { opacity: .95; transform: scale(.5); }
+      68% { opacity: 0; transform: scale(1.55); }
+    }
+  </style>
+
+  <rect class="terminal" x="36" y="30" width="888" height="360" rx="14"/>
+  <path class="titlebar" d="M50 30h860c8 0 14 6 14 14v28H36V44c0-8 6-14 14-14z"/>
+  <circle class="traffic-red" cx="60" cy="51" r="6"/>
+  <circle class="traffic-yellow" cx="82" cy="51" r="6"/>
+  <circle class="traffic-green" cx="104" cy="51" r="6"/>
+  <text class="title" x="480" y="56" text-anchor="middle">Terminal - read-docs</text>
+
+  <rect class="select" x="58" y="127" width="622" height="30" rx="4"/>
+  <rect class="select" x="58" y="161" width="590" height="30" rx="4"/>
+  <rect class="select" x="58" y="195" width="548" height="30" rx="4"/>
+  <rect class="select" x="58" y="229" width="594" height="30" rx="4"/>
+
+  <text class="mono prompt" x="64" y="108">$</text>
+  <text class="mono line" x="92" y="108">Highlight the passage you want to hear.</text>
+  <text class="mono line" x="64" y="150">Read Docs keeps your place while the selected text</text>
+  <text class="mono line" x="64" y="184">is sent to the local reader and spoken aloud.</text>
+  <text class="mono line" x="64" y="218">Use Services, choose Read with Doc Reader,</text>
+  <text class="mono line" x="64" y="252">then keep working while the narration starts.</text>
+  <text class="mono line dim" x="64" y="306">tab to queue message</text>
+
+  <g class="menu">
+    <rect class="menu-panel" x="498" y="52" width="190" height="318" rx="9"/>
+    <text class="menu-text" x="514" y="76">Open man Page</text>
+    <text class="menu-text" x="514" y="101">Search man Page Index</text>
+    <line class="menu-rule" x1="512" y1="116" x2="674" y2="116"/>
+    <text class="menu-text" x="514" y="140">Look Up "passage"</text>
+    <text class="menu-text" x="514" y="165">Search with Google</text>
+    <line class="menu-rule" x1="512" y1="180" x2="674" y2="180"/>
+    <text class="menu-text" x="534" y="204">Copy</text>
+    <text class="menu-text" x="534" y="229">Paste</text>
+    <line class="menu-rule" x1="512" y1="244" x2="674" y2="244"/>
+    <text class="menu-text" x="514" y="268">Show Writing Tools</text>
+    <text class="menu-text" x="534" y="293">Proofread</text>
+    <text class="menu-text" x="534" y="318">Rewrite</text>
+    <line class="menu-rule" x1="512" y1="333" x2="674" y2="333"/>
+    <rect class="services-row" x="506" y="338" width="174" height="24" rx="6"/>
+    <text class="menu-text" x="534" y="355">Services</text>
+    <text class="menu-text" x="660" y="355">&gt;</text>
+    <path class="menu-icon" d="M516 195h8v8h-8zM520 192v14M514 199h12"/>
+    <path class="menu-icon" d="M516 219h8v8h-8zM514 222h12"/>
+    <path class="menu-icon" d="M515 285l4 4 8-9"/>
+    <path class="menu-icon" d="M515 309c3-6 11-6 14 0M516 316h12"/>
+    <path class="menu-icon" d="M515 346l5-5 5 5-5 5zM526 349h5"/>
+  </g>
+
+  <g class="submenu">
+    <rect class="menu-panel" x="682" y="222" width="238" height="160" rx="9"/>
+    <text class="menu-text" x="696" y="247">Add to Music as a Spoken Track</text>
+    <text class="menu-text" x="696" y="272">Open</text>
+    <text class="menu-text" x="696" y="297">Open Link in VOX</text>
+    <text class="menu-text" x="696" y="322">Open man Page in Terminal</text>
+    <rect class="read-row" x="688" y="331" width="226" height="24" rx="6"/>
+    <text class="menu-text read-label" x="696" y="348">Read with Doc Reader</text>
+    <text class="menu-text" x="696" y="366">Search man Page Index in Terminal</text>
+  </g>
+
+  <circle class="tap-ring" cx="802" cy="343" r="18"/>
+
+  <g class="status">
+    <text class="mono prompt" x="64" y="350">$</text>
+    <text class="mono line" x="92" y="350">read-docs is reading aloud...</text>
+    <rect class="meter-bar" x="404" y="336" width="5" height="22" rx="2"/>
+    <rect class="meter-bar" x="414" y="326" width="5" height="32" rx="2"/>
+    <rect class="meter-bar" x="424" y="333" width="5" height="25" rx="2"/>
+    <rect class="meter-bar" x="434" y="320" width="5" height="38" rx="2"/>
+    <rect class="meter-bar" x="444" y="331" width="5" height="27" rx="2"/>
+  </g>
+</svg>

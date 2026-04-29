@@ -1,0 +1,49 @@
+{
+  "name": "read-docs",
+  "version": "0.1.0",
+  "description": "Local-first streaming document reader for PDFs, Word files, plain text, and Markdown.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "read-docs": "./bin/read-docs.js"
+  },
+  "files": [
+    "bin/",
+    "doc_reader/",
+    "docs/readme-animation.svg",
+    "disable-startup",
+    "enable-startup",
+    "install-context-menu-service",
+    "read-selection-service.sh",
+    "requirements.txt",
+    "run-doc-reader",
+    "uninstall-context-menu-service"
+  ],
+  "scripts": {
+    "pack:dry-run": "npm pack --dry-run"
+  },
+  "keywords": [
+    "document-reader",
+    "read-docs",
+    "pdf",
+    "docx",
+    "text-to-speech",
+    "tts",
+    "macos",
+    "reader"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SproutSeeds/doc-reader.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SproutSeeds/doc-reader/issues"
+  },
+  "homepage": "https://github.com/SproutSeeds/doc-reader#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

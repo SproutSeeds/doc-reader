@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="$SCRIPT_DIR/.venv"
+VENV_DIR="${DOC_READER_VENV_DIR:-$SCRIPT_DIR/.venv}"
 REQ_FILE="$SCRIPT_DIR/requirements.txt"
 STAMP_FILE="$VENV_DIR/.requirements.sha256"
 
@@ -11,6 +11,8 @@ if [[ -z "$PYTHON_BIN" ]]; then
   echo "[doc-reader] python3 not found. Install Python 3 and try again." >&2
   exit 1
 fi
+
+mkdir -p "$(dirname "$VENV_DIR")"
 
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
   echo "[doc-reader] Creating virtual environment..."
@@ -40,4 +42,5 @@ if [[ "${1:-}" == "--prepare-only" ]]; then
   exit 0
 fi
 
+export PYTHONPATH="$SCRIPT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 exec "$VENV_DIR/bin/python" -m doc_reader.tray "$@"

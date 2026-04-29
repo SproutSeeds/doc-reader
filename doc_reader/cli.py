@@ -11,7 +11,7 @@ from .speech import ConsoleSpeaker, build_speaker
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="doc-reader",
+        prog="read-docs",
         description=(
             "Stream document narration with smart chunking so playback can start early "
             "while later sections load in the background."

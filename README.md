@@ -1,4 +1,8 @@
-# doc-reader
+# read-docs
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/SproutSeeds/doc-reader/main/docs/readme-animation.svg" alt="Animated read-docs terminal workflow showing selected text and the Read with Doc Reader service" width="760">
+</p>
 
 Maintained by SproutSeeds. Research stewardship: Fractal Research Group ([frg.earth](https://frg.earth)).
 
@@ -25,6 +29,25 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python -m doc_reader /path/to/file.pdf --mode smart --style balanced --verbose
+```
+
+## npm package
+
+This repository is configured for the public npm package `read-docs`.
+The unscoped `doc-reader` package name is already owned by another maintainer, so the
+official SproutSeeds package uses the available global npm name `read-docs`.
+
+Once the package is published:
+
+```bash
+npm install -g read-docs
+read-docs
+```
+
+Pass a document path to use the command-line reader instead of the tray launcher:
+
+```bash
+read-docs /path/to/file.pdf --mode smart --style balanced --verbose
 ```
 
 ## One-command launch
