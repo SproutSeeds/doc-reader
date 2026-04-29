@@ -5,7 +5,7 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "read-docs": "./bin/read-docs.js"
+    "read-docs": "bin/read-docs.js"
   },
   "files": [
     "bin/",
