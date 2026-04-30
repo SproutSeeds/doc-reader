@@ -4,6 +4,12 @@
 
 `0.1.1` is the first macOS-first native-wrapper release.
 
+## 0.1.2
+
+`0.1.2` improves the install-time error when Apple's Command Line Tools are
+missing. Users are told to run `xcode-select --install` and then retry
+`read-docs install`.
+
 Before publishing:
 
 ```bash

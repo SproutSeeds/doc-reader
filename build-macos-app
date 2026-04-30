@@ -17,7 +17,11 @@ EXECUTABLE="$MACOS/DocReader"
 INFO_PLIST="$CONTENTS/Info.plist"
 
 if ! command -v swiftc >/dev/null 2>&1; then
-  echo "[doc-reader] swiftc is required to build the native macOS wrapper." >&2
+  echo "[doc-reader] Apple's Command Line Tools are required to build the native macOS wrapper." >&2
+  echo "[doc-reader] Install them with:" >&2
+  echo "[doc-reader]   xcode-select --install" >&2
+  echo "[doc-reader] Then rerun:" >&2
+  echo "[doc-reader]   read-docs install" >&2
   exit 1
 fi
 
@@ -54,9 +58,9 @@ cat > "$INFO_PLIST" <<PLIST
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.1</string>
+    <string>0.1.2</string>
     <key>CFBundleVersion</key>
-    <string>0.1.1</string>
+    <string>0.1.2</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>
