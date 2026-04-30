@@ -45,7 +45,7 @@ class StreamingReader:
 
     def run(self, speaker: Speaker) -> ReaderStats:
         stats = ReaderStats()
-        producer = threading.Thread(target=self._produce, daemon=True)
+        producer = threading.Thread(target=self._produce, args=(speaker,), daemon=True)
 
         start_time = time.perf_counter()
         producer.start()
@@ -73,7 +73,7 @@ class StreamingReader:
         speaker.close()
         return stats
 
-    def _produce(self) -> None:
+    def _produce(self, speaker: Speaker) -> None:
         try:
             narrator = SmartNarrator(mode=self.config.mode, style=self.config.style)
             blocks = iter_document_blocks_with_meta(
@@ -101,6 +101,7 @@ class StreamingReader:
                     if elapsed_seconds + chunk_seconds <= self.config.start_seconds:
                         elapsed_seconds += chunk_seconds
                         continue
+                    speaker.prefetch(prepared.text, prepared.index)
                     self._queue.put(
                         _PreparedChunk(
                             prepared=prepared,
@@ -131,7 +132,7 @@ class StreamingReader:
             )
         if self.config.verbose:
             print(f"[doc-reader] chunk-start index={prepared.index}")
-        speaker.speak(prepared.text)
+        speaker.speak(prepared.text, prepared.index)
         if self.config.verbose:
             print(f"[doc-reader] chunk-done index={prepared.index}")
         stats.chunks_spoken += 1

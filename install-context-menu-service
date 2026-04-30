@@ -11,7 +11,7 @@ PLISTBUDDY="/usr/libexec/PlistBuddy"
 
 if [[ ! -x "$HELPER" ]]; then
   echo "[doc-reader] Missing helper: $HELPER"
-  echo "[doc-reader] Run ./enable-startup first."
+  echo "[doc-reader] Run read-docs install first."
   exit 1
 fi
 

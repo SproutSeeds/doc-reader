@@ -1,7 +1,7 @@
 {
   "name": "read-docs",
-  "version": "0.1.0",
-  "description": "Local-first streaming document reader for PDFs, Word files, plain text, and Markdown.",
+  "version": "0.1.1",
+  "description": "macOS-first bootstrapper for a local streaming document reader.",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -9,8 +9,11 @@
   },
   "files": [
     "bin/",
+    "build-macos-app",
     "doc_reader/",
     "docs/readme-animation.svg",
+    "macos/",
+    "RELEASE.md",
     "disable-startup",
     "enable-startup",
     "install-context-menu-service",
@@ -30,6 +33,8 @@
     "text-to-speech",
     "tts",
     "macos",
+    "menubar",
+    "launchagent",
     "reader"
   ],
   "repository": {

@@ -62,12 +62,16 @@ def chunk_blocks_stream(
             and current_page is not None
             and block_page != current_page
         ):
-            yield ChunkOutput(text=" ".join(current_sentences), page_number=current_page)
-            current_sentences = []
-            current_words = 0
-            chunk_index += 1
+            target_words = first_chunk_words if chunk_index == 0 else chunk_words
+            min_page_split_words = max(60, min(target_words, max(40, target_words // 2)))
+            if current_words >= min_page_split_words:
+                yield ChunkOutput(text=" ".join(current_sentences), page_number=current_page)
+                current_sentences = []
+                current_words = 0
+                chunk_index += 1
+                current_page = None
 
-        if block_page is not None:
+        if block_page is not None and current_page is None:
             current_page = block_page
 
         for sentence in _iter_sentences(block_text):

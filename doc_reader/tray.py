@@ -50,7 +50,10 @@ SUPPORTED_SUFFIXES = {".pdf", ".docx", ".txt", ".md", ".markdown"}
 DEFAULT_MODE = "full"
 DEFAULT_STYLE = "balanced"
 DEFAULT_RATE = 180
-MAX_VOICES_PER_GROUP = 8
+MAX_SYSTEM_VOICES = 8
+MAX_ELEVENLABS_VOICES = 50
+ELEVENLABS_USER_URL = "https://api.elevenlabs.io/v1/user"
+ELEVENLABS_VOICES_URL = "https://api.elevenlabs.io/v2/voices"
 SYSTEM_BACKEND = "macsay" if sys.platform == "darwin" else "pyttsx3"
 DEFAULT_SELECTION_SHORTCUT = "<ctrl>+<alt>+<cmd>+r"
 SELECTION_SHORTCUT = os.getenv("DOC_READER_SELECTION_SHORTCUT", DEFAULT_SELECTION_SHORTCUT)
@@ -61,6 +64,8 @@ LIBRARY_MAX_ITEMS = 50
 CHAPTER_MAX_ITEMS = 60
 CHAPTER_TITLE_MAX_WORDS = 14
 CHAPTER_WORD_OFFSET_MIN_GAP = 50
+VOICE_BACKEND_SETTINGS_KEY = "voice/backend"
+VOICE_VALUE_SETTINGS_KEY = "voice/value"
 
 CHAPTER_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
@@ -83,6 +88,31 @@ CHUNK_PAGE_RE = re.compile(r"^\[doc-reader\]\s+page\s+number=(\d+)(?:\s+chunk=(\
 
 def _is_supported_file(path: Path) -> bool:
     return path.suffix.lower() in SUPPORTED_SUFFIXES
+
+
+def _set_macos_accessory_activation_policy() -> None:
+    if sys.platform != "darwin":
+        return
+
+    try:
+        import ctypes
+
+        objc = ctypes.cdll.LoadLibrary("/usr/lib/libobjc.A.dylib")
+        objc.objc_getClass.restype = ctypes.c_void_p
+        objc.sel_registerName.restype = ctypes.c_void_p
+
+        ns_application = objc.objc_getClass(b"NSApplication")
+        shared_application = objc.sel_registerName(b"sharedApplication")
+        objc.objc_msgSend.restype = ctypes.c_void_p
+        objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        app = objc.objc_msgSend(ns_application, shared_application)
+
+        set_activation_policy = objc.sel_registerName(b"setActivationPolicy:")
+        objc.objc_msgSend.restype = ctypes.c_bool
+        objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long]
+        objc.objc_msgSend(app, set_activation_policy, 1)
+    except Exception:
+        return
 
 
 def _build_fallback_icon() -> QIcon:
@@ -110,7 +140,7 @@ def _tray_icon() -> QIcon:
     return _build_fallback_icon()
 
 
-def _load_system_voices(limit: int = MAX_VOICES_PER_GROUP) -> list[str]:
+def _load_system_voices(limit: int = MAX_SYSTEM_VOICES) -> list[str]:
     if sys.platform != "darwin":
         return ["Default"]
 
@@ -139,36 +169,101 @@ def _load_system_voices(limit: int = MAX_VOICES_PER_GROUP) -> list[str]:
     return ordered[: max(1, limit)]
 
 
-def _load_elevenlabs_voices(api_key: str, limit: int = MAX_VOICES_PER_GROUP) -> list[tuple[str, str]]:
-    if not api_key:
-        return []
+def _extract_elevenlabs_error_message(response) -> str:
+    message = f"HTTP {response.status_code}"
+    try:
+        payload = response.json()
+    except ValueError:
+        body = (response.text or "").strip()
+        return body[:200] if body else message
+
+    if not isinstance(payload, dict):
+        return message
+
+    detail = payload.get("detail")
+    if isinstance(detail, str) and detail.strip():
+        return detail.strip()
+    if isinstance(detail, dict):
+        detail_message = detail.get("message")
+        if isinstance(detail_message, str) and detail_message.strip():
+            return detail_message.strip()
+    return message
+
+
+def _load_elevenlabs_voices(
+    api_key: str,
+    limit: int = MAX_ELEVENLABS_VOICES,
+) -> tuple[list[tuple[str, str]], str | None]:
+    key = api_key.strip()
+    if not key:
+        return [], "API key is empty."
 
     try:
         import requests
     except ModuleNotFoundError:
-        return []
+        return [], "Missing requests dependency."
+
+    page_size = max(10, min(100, max(1, limit)))
+    voices_by_id: dict[str, str] = {}
+    next_page_token: str | None = None
 
     try:
-        response = requests.get(
-            "https://api.elevenlabs.io/v1/voices",
-            headers={"xi-api-key": api_key},
-            timeout=10,
-        )
-        if response.status_code >= 400:
-            return []
-        payload = response.json()
-    except Exception:  # noqa: BLE001
-        return []
+        while True:
+            params: dict[str, object] = {
+                "page_size": page_size,
+                "include_total_count": "false",
+            }
+            if next_page_token:
+                params["next_page_token"] = next_page_token
 
-    voices: list[tuple[str, str]] = []
-    for item in payload.get("voices", []):
-        name = item.get("name")
-        voice_id = item.get("voice_id")
-        if isinstance(name, str) and isinstance(voice_id, str) and name and voice_id:
-            voices.append((name, voice_id))
+            response = requests.get(
+                ELEVENLABS_VOICES_URL,
+                headers={"xi-api-key": key, "Accept": "application/json"},
+                params=params,
+                timeout=10,
+            )
+            if response.status_code >= 400:
+                return [], _extract_elevenlabs_error_message(response)
 
+            payload = response.json()
+            if not isinstance(payload, dict):
+                return [], "Unexpected response shape from ElevenLabs voices API."
+
+            raw_voices = payload.get("voices")
+            if not isinstance(raw_voices, list):
+                return [], "Unexpected ElevenLabs voice list payload."
+
+            for item in raw_voices:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name")
+                voice_id = item.get("voice_id")
+                if not isinstance(voice_id, str):
+                    voice_id = item.get("voiceId")
+                if isinstance(name, str) and isinstance(voice_id, str) and name and voice_id:
+                    voices_by_id[voice_id] = name
+
+            if len(voices_by_id) >= limit:
+                break
+
+            token = payload.get("next_page_token")
+            if not isinstance(token, str):
+                token = payload.get("nextPageToken")
+            if not isinstance(token, str) or not token.strip():
+                break
+            next_page_token = token.strip()
+    except requests.RequestException as exc:
+        return [], f"Network error: {exc}"
+    except ValueError:
+        return [], "Invalid JSON from ElevenLabs voices API."
+    except Exception as exc:  # noqa: BLE001
+        return [], f"Unexpected error: {exc}"
+
+    voices = [(name, voice_id) for voice_id, name in voices_by_id.items()]
     voices.sort(key=lambda pair: pair[0].lower())
-    return voices[: max(1, limit)]
+    if not voices:
+        return [], "No voices returned for this account."
+    return voices[: max(1, limit)], None
 
 
 def _validate_elevenlabs_api_key(api_key: str, timeout_seconds: float = 8.0) -> tuple[bool, str]:
@@ -183,8 +278,8 @@ def _validate_elevenlabs_api_key(api_key: str, timeout_seconds: float = 8.0) -> 
 
     try:
         response = requests.get(
-            "https://api.elevenlabs.io/v1/user",
-            headers={"xi-api-key": key},
+            ELEVENLABS_USER_URL,
+            headers={"xi-api-key": key, "Accept": "application/json"},
             timeout=timeout_seconds,
         )
     except Exception as exc:  # noqa: BLE001
@@ -195,21 +290,7 @@ def _validate_elevenlabs_api_key(api_key: str, timeout_seconds: float = 8.0) -> 
 
     if response.status_code in {401, 403}:
         return False, "Invalid API key."
-
-    message = f"HTTP {response.status_code}"
-    try:
-        payload = response.json()
-        detail = payload.get("detail")
-        if isinstance(detail, str) and detail.strip():
-            message = detail.strip()
-        elif isinstance(detail, dict):
-            detail_message = detail.get("message")
-            if isinstance(detail_message, str) and detail_message.strip():
-                message = detail_message.strip()
-    except Exception:  # noqa: BLE001
-        pass
-
-    return False, message
+    return False, _extract_elevenlabs_error_message(response)
 
 
 def _word_count_inline(text: str) -> int:
@@ -970,6 +1051,8 @@ class ReaderPanel(QWidget):
         self.elevenlabs_key_validated = bool(
             self.settings.value("elevenlabs/api_key_validated", False, type=bool)
         )
+        self._last_elevenlabs_voice_error: str | None = None
+        self._voice_populating = False
 
         self.setWindowTitle("Doc Reader")
         self.setWindowFlag(Qt.WindowType.Tool, True)
@@ -1034,6 +1117,7 @@ class ReaderPanel(QWidget):
         voice_row = QHBoxLayout()
         voice_row.addWidget(QLabel("Voice"))
         self.voice_combo = QComboBox()
+        self.voice_combo.currentIndexChanged.connect(self._on_voice_changed)
         voice_row.addWidget(self.voice_combo)
         root.addLayout(voice_row)
 
@@ -1074,7 +1158,9 @@ class ReaderPanel(QWidget):
 
         self._populate_voice_options()
         self.refresh_library_list()
-        if self.elevenlabs_api_key and self.elevenlabs_key_validated:
+        if self.elevenlabs_api_key and self._last_elevenlabs_voice_error:
+            self._set_api_key_status("error", "Voices unavailable")
+        elif self.elevenlabs_api_key and self.elevenlabs_key_validated:
             self._set_api_key_status("success", "Saved")
         elif self.elevenlabs_api_key:
             self._set_api_key_status("info", "Loaded")
@@ -1622,39 +1708,72 @@ class ReaderPanel(QWidget):
             self._append_log(f"[doc-reader] ElevenLabs key check failed: {message}")
             return
 
+        elevenlabs_voices, load_error = _load_elevenlabs_voices(candidate, MAX_ELEVENLABS_VOICES)
         self.elevenlabs_api_key = candidate
-        self.elevenlabs_key_validated = True
         self.settings.setValue("elevenlabs/api_key", candidate)
-        self.settings.setValue("elevenlabs/api_key_validated", True)
-        self._set_api_key_status("success", "Saved")
-        self._append_log("[doc-reader] ElevenLabs key verified and saved.")
-        self._populate_voice_options()
-
-    def _populate_voice_options(self) -> None:
-        self.voice_combo.clear()
-
-        self._add_disabled_item("Operating System Voices")
-        system_voices = _load_system_voices(MAX_VOICES_PER_GROUP)
-        for voice in system_voices:
-            value = None if voice == "Default" else voice
-            label = f"System • {voice}"
-            self.voice_combo.addItem(label, {"backend": SYSTEM_BACKEND, "value": value})
-
-        self._add_disabled_item("ElevenLabs Voices")
-        if self.elevenlabs_api_key:
-            elevenlabs_voices = _load_elevenlabs_voices(self.elevenlabs_api_key, MAX_VOICES_PER_GROUP)
-            if elevenlabs_voices:
-                for name, voice_id in elevenlabs_voices:
-                    self.voice_combo.addItem(
-                        f"ElevenLabs • {name}",
-                        {"backend": "elevenlabs", "value": voice_id},
-                    )
-            else:
-                self._add_disabled_item("No ElevenLabs voices loaded")
+        if load_error:
+            self.elevenlabs_key_validated = False
+            self.settings.setValue("elevenlabs/api_key_validated", False)
+            self._set_api_key_status("error", "Connected, but voices unavailable")
+            self._append_log(
+                f"[doc-reader] ElevenLabs key saved, but voices failed to load: {load_error}"
+            )
         else:
-            self._add_disabled_item("Set ELEVENLABS_API_KEY to load ElevenLabs voices")
+            self.elevenlabs_key_validated = True
+            self.settings.setValue("elevenlabs/api_key_validated", True)
+            self._set_api_key_status("success", "Saved")
+            self._append_log(
+                f"[doc-reader] ElevenLabs key verified and saved ({len(elevenlabs_voices)} voices)."
+            )
+        self._populate_voice_options(
+            elevenlabs_voices=elevenlabs_voices if not load_error else None,
+            elevenlabs_error=load_error,
+        )
 
-        self._select_first_valid_voice()
+    def _populate_voice_options(
+        self,
+        *,
+        elevenlabs_voices: list[tuple[str, str]] | None = None,
+        elevenlabs_error: str | None = None,
+    ) -> None:
+        self._voice_populating = True
+        try:
+            self.voice_combo.clear()
+
+            self._add_disabled_item("Operating System Voices")
+            system_voices = _load_system_voices(MAX_SYSTEM_VOICES)
+            for voice in system_voices:
+                value = None if voice == "Default" else voice
+                label = f"System • {voice}"
+                self.voice_combo.addItem(label, {"backend": SYSTEM_BACKEND, "value": value})
+
+            self._add_disabled_item("ElevenLabs Voices")
+            if self.elevenlabs_api_key:
+                load_error = elevenlabs_error
+                if elevenlabs_voices is None and load_error is None:
+                    elevenlabs_voices, load_error = _load_elevenlabs_voices(
+                        self.elevenlabs_api_key,
+                        MAX_ELEVENLABS_VOICES,
+                    )
+                if elevenlabs_voices:
+                    self._last_elevenlabs_voice_error = None
+                    for name, voice_id in elevenlabs_voices:
+                        self.voice_combo.addItem(
+                            f"ElevenLabs • {name}",
+                            {"backend": "elevenlabs", "value": voice_id},
+                        )
+                else:
+                    self._add_disabled_item("No ElevenLabs voices loaded")
+                    if load_error and load_error != self._last_elevenlabs_voice_error:
+                        self._append_log(f"[doc-reader] ElevenLabs voice load failed: {load_error}")
+                    self._last_elevenlabs_voice_error = load_error
+            else:
+                self._last_elevenlabs_voice_error = None
+                self._add_disabled_item("Set ELEVENLABS_API_KEY to load ElevenLabs voices")
+
+            self._select_preferred_voice()
+        finally:
+            self._voice_populating = False
 
     def _add_disabled_item(self, label: str) -> None:
         index = self.voice_combo.count()
@@ -1670,6 +1789,81 @@ class ReaderPanel(QWidget):
             if isinstance(data, dict) and data.get("backend"):
                 self.voice_combo.setCurrentIndex(i)
                 return
+
+    def _saved_voice_choice(self) -> tuple[str | None, str | None]:
+        backend = str(self.settings.value(VOICE_BACKEND_SETTINGS_KEY, "") or "").strip().lower()
+        raw_value = self.settings.value(VOICE_VALUE_SETTINGS_KEY, None)
+        value = raw_value.strip() if isinstance(raw_value, str) else None
+        return (backend or None), (value or None)
+
+    def _find_exact_voice_index(self, backend: str, value: str | None) -> int:
+        expected_backend = backend.strip().lower()
+        expected_value = value.strip() if isinstance(value, str) else None
+        expected_value = expected_value or None
+
+        for i in range(self.voice_combo.count()):
+            data = self.voice_combo.itemData(i)
+            if not isinstance(data, dict) or not data.get("backend"):
+                continue
+            item_backend = str(data.get("backend", "")).strip().lower()
+            item_value = data.get("value")
+            item_value = item_value.strip() if isinstance(item_value, str) else None
+            item_value = item_value or None
+            if item_backend == expected_backend and item_value == expected_value:
+                return i
+        return -1
+
+    def _find_first_voice_index(self, backend: str | None = None) -> int:
+        expected_backend = backend.strip().lower() if isinstance(backend, str) else None
+        for i in range(self.voice_combo.count()):
+            data = self.voice_combo.itemData(i)
+            if not isinstance(data, dict) or not data.get("backend"):
+                continue
+            if expected_backend is None:
+                return i
+            item_backend = str(data.get("backend", "")).strip().lower()
+            if item_backend == expected_backend:
+                return i
+        return -1
+
+    def _select_preferred_voice(self) -> None:
+        index = -1
+        saved_backend, saved_value = self._saved_voice_choice()
+        if saved_backend:
+            index = self._find_exact_voice_index(saved_backend, saved_value)
+            if index < 0:
+                index = self._find_first_voice_index(saved_backend)
+
+        if index < 0 and self.elevenlabs_api_key and self._last_elevenlabs_voice_error is None:
+            index = self._find_first_voice_index("elevenlabs")
+
+        if index < 0:
+            index = self._find_first_voice_index(SYSTEM_BACKEND)
+
+        if index < 0:
+            index = self._find_first_voice_index()
+
+        if index >= 0:
+            self.voice_combo.setCurrentIndex(index)
+
+    def _on_voice_changed(self, _index: int) -> None:
+        if self._voice_populating:
+            return
+
+        choice = self.voice_combo.currentData()
+        if not isinstance(choice, dict) or not choice.get("backend"):
+            return
+
+        backend = str(choice.get("backend", "")).strip().lower()
+        value = choice.get("value")
+        value = value.strip() if isinstance(value, str) else None
+        value = value or None
+
+        self.settings.setValue(VOICE_BACKEND_SETTINGS_KEY, backend)
+        if value:
+            self.settings.setValue(VOICE_VALUE_SETTINGS_KEY, value)
+        else:
+            self.settings.remove(VOICE_VALUE_SETTINGS_KEY)
 
 
 class TrayController(QObject):
@@ -1863,6 +2057,7 @@ class TrayController(QObject):
 
 def main() -> int:
     app = QApplication(sys.argv)
+    _set_macos_accessory_activation_policy()
     app.setQuitOnLastWindowClosed(False)
 
     if not QSystemTrayIcon.isSystemTrayAvailable():

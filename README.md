@@ -6,19 +6,60 @@
 
 Maintained by SproutSeeds. Research stewardship: Fractal Research Group ([frg.earth](https://frg.earth)).
 
-A local-first streaming document reader for `.pdf`, `.docx`, `.txt`, and `.md` files.
+A macOS-first, local-first streaming document reader for `.pdf`, `.docx`, `.txt`,
+and `.md` files.
 
 It is designed to start speaking quickly from the first chunk, then keep playback continuous by preparing later chunks in the background.
 
 ## Why this exists
 
-- Avoids user-provided ElevenLabs keys.
-- Uses local text-to-speech by default (`say` on macOS, with optional `pyttsx3` fallback).
+- Does not ship a shared ElevenLabs key; cloud voices are opt-in per user.
+- Uses local text-to-speech by default (`say` on macOS, with optional `pyttsx3` fallback for the CLI).
 - Reads with understanding in `smart` mode instead of spelling every character.
 - Prefetches chunks so playback remains continuous.
 - Supports optional ElevenLabs speech output when you want cloud voices.
 
-## Quick start
+## Platform support
+
+The app experience is macOS-first. The menu-bar app, login agent, global selection
+hotkey, and right-click Services integration are macOS features.
+
+The document reader engine is still a Python CLI and may work on Linux or Windows
+with compatible speech dependencies, but the packaged app workflow is supported on
+macOS.
+
+## Quick start: macOS app
+
+Install the npm bootstrapper, then install the managed macOS app agent:
+
+```bash
+npm install -g read-docs
+read-docs install
+read-docs status
+```
+
+`read-docs install` copies the runtime into `~/.doc-reader-managed`, prepares its
+Python environment, registers a LaunchAgent, starts the menu-bar app, and installs
+the `Read with Doc Reader` Services item for highlighted text.
+
+Current native-wrapper builds require Apple's Command Line Tools because the app
+bundle is compiled locally during install:
+
+```bash
+xcode-select --install
+```
+
+Useful app commands:
+
+```bash
+read-docs start
+read-docs stop
+read-docs restart
+read-docs status
+read-docs uninstall
+```
+
+## Quick start: source checkout
 
 1. Create and activate a virtual environment.
 2. Install dependencies.
@@ -37,20 +78,23 @@ This repository is configured for the public npm package `read-docs`.
 The unscoped `doc-reader` package name is already owned by another maintainer, so the
 official SproutSeeds package uses the available global npm name `read-docs`.
 
-Once the package is published:
+The npm package is a bootstrapper and control surface for the managed app. Running
+`read-docs` with no arguments shows the available app and CLI commands; it does not
+directly run the Python tray from the package install location.
+
+Install globally:
 
 ```bash
 npm install -g read-docs
-read-docs
 ```
 
-Pass a document path to use the command-line reader instead of the tray launcher:
+Pass a document path to use the command-line reader instead of the menu-bar app:
 
 ```bash
 read-docs /path/to/file.pdf --mode smart --style balanced --verbose
 ```
 
-## One-command launch
+## Development launch
 
 From the repo root:
 
@@ -62,7 +106,7 @@ This command will:
 
 - Create `.venv` if needed
 - Install/update dependencies when `requirements.txt` changes
-- Launch the menu-bar app
+- Launch the menu-bar app directly from the source checkout
 
 Optional fallback TTS engine:
 
@@ -71,6 +115,11 @@ Optional fallback TTS engine:
 ```
 
 ## ElevenLabs (optional)
+
+The package does not include an ElevenLabs API key. For cloud voices, provide your
+own key with `ELEVENLABS_API_KEY` or paste it into the tray panel. Keys entered in
+the tray are stored only in local OS settings for that computer; clear the field
+and press Enter to remove the saved key.
 
 CLI with environment variables:
 
@@ -90,16 +139,23 @@ CLI with explicit flags:
   --elevenlabs-output-format mp3_44100_128
 ```
 
-Tray app usage:
+App usage:
 
 - Open the panel from the menu bar icon.
-- Set `ELEVENLABS_API_KEY` in your shell/session before launching the tray app.
-- Use the single voice dropdown to pick either an OS voice or an ElevenLabs voice.
-- Click `Start` (or pick/drop a file to auto-start).
+- Choose a document, read clipboard text, or paste text into the reader window.
+- Open `Settings...` to choose system speech or ElevenLabs.
+- Paste an ElevenLabs API key into settings and load voices if you want cloud voices.
+- Click `Stop Reading` from the menu bar item to stop active playback.
 
-## macOS menu-bar GUI
+## macOS menu-bar app
 
-You can run a top-bar widget (system tray icon on macOS):
+The supported app path is:
+
+```bash
+read-docs install
+```
+
+For local development, you can also run the Python menu-bar module directly:
 
 ```bash
 python -m doc_reader.tray
@@ -107,48 +163,28 @@ python -m doc_reader.tray
 
 What it gives you:
 
-- Click the menu-bar icon to open the reader panel.
-- Click `Browse...` for a classic file picker.
-- Drag and drop a supported file onto the panel.
-- Paste plain text directly into the text box and click `Start`.
-- Choose from one voice dropdown with grouped options:
-  - `Operating System Voices`
-  - `ElevenLabs Voices` (when `ELEVENLABS_API_KEY` is available)
-- Enter your ElevenLabs API key in the panel and press Enter:
-  - shows a green check on successful validation
-  - stores it locally for this computer across restarts
-- Built-in library for dropped/browsed files:
-  - auto-saves progress while reading
-  - shows saved books in a `Library` dropdown
-  - click `Resume` to continue from the saved spot
-- Chapter jump (best-effort detection):
-  - file headings like `Chapter 1`, `Part II`, `Introduction`, etc. are detected
-  - pick a chapter in the `Chapter` dropdown, then press `Start` to jump there
-  - if already playing, changing chapter jumps playback immediately
-- Live current-page indicator for PDFs (`Current page: N`) while speaking.
-- Tray playback uses full reading mode (not summary mode) to avoid dropping content.
-- Pause/Resume and Library resume use exact chunk-position restart (no content skip; may repeat a little).
-- File starts reading immediately after selection or drop.
-- Global selection hotkey (macOS): highlight text anywhere and press `Control+Option+Command+R`.
-  - This copies the current selection into the paste box and starts reading immediately.
-  - First use may prompt for macOS Accessibility/Automation permissions.
-- Playback controls:
-  - `Start`
-  - `Pause` / `Resume`
-  - `Back 15s` (approximate rewind)
-  - `Stop`
+- Native menu-bar app shell (`Doc Reader.app`) instead of a Python Dock app.
+- `Open Doc Reader` for pasted text reading.
+- `Choose Document...` for `.pdf`, `.docx`, `.txt`, `.md`, and `.markdown`.
+- `Read Clipboard` for quick text playback.
+- `Stop Reading` for active playback.
+- `Settings...` for full/smart mode, system speech, and ElevenLabs voice setup.
+- ElevenLabs API keys stored in the macOS Keychain.
+- Right-click Services integration for highlighted text.
 
-Optional: customize the hotkey before launch with `DOC_READER_SELECTION_SHORTCUT`
-(pynput format), for example `export DOC_READER_SELECTION_SHORTCUT='<ctrl>+<alt>+<cmd>+s'`.
-The default hotkey remains active as a fallback for context-menu integration.
+The older PySide tray module remains in the source tree as a development fallback,
+but the npm app path uses the native macOS wrapper.
 
 ## Right-click menu (macOS Services)
 
 Install a native `Services` entry so highlighted text can be read from right-click menus:
 
 ```bash
-./install-context-menu-service
+read-docs install
 ```
+
+If the app agent is already installed and you only need to refresh the Services
+entry, run `read-docs install-service`.
 
 Then in any app:
 
@@ -161,24 +197,25 @@ This Services flow does not use synthetic keystrokes.
 Remove it later with:
 
 ```bash
-./uninstall-context-menu-service
+read-docs uninstall-service
 ```
 
 ## Auto-start at login (macOS)
 
-Enable startup once:
+The app agent is registered by:
 
 ```bash
-./enable-startup
+read-docs install
 ```
 
-This installs a managed startup copy at `~/.doc-reader-managed` and registers a LaunchAgent.
-Run `./enable-startup` again after code changes to refresh that managed copy.
+This installs a managed app copy at `~/.doc-reader-managed` and registers a
+LaunchAgent. Run `read-docs restart` after package updates to refresh that managed
+copy and restart the app.
 
 Disable later:
 
 ```bash
-./disable-startup
+read-docs disable-startup
 ```
 
 ## Modes

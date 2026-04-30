@@ -6,12 +6,17 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Protocol
 
 
 class Speaker(Protocol):
-    def speak(self, text: str) -> None:
+    def prefetch(self, text: str, key: int | None = None) -> None:
+        ...
+
+    def speak(self, text: str, key: int | None = None) -> None:
         ...
 
     def close(self) -> None:
@@ -20,7 +25,10 @@ class Speaker(Protocol):
 
 @dataclass
 class ConsoleSpeaker:
-    def speak(self, text: str) -> None:
+    def prefetch(self, text: str, key: int | None = None) -> None:
+        return
+
+    def speak(self, text: str, key: int | None = None) -> None:
         print(text)
 
     def close(self) -> None:
@@ -39,6 +47,9 @@ class MacSaySpeaker:
         self.rate = max(90, min(rate, 500))
         self.voice = self._resolve_voice(voice_hint)
         self._active: subprocess.Popen[str] | None = None
+
+    def prefetch(self, text: str, key: int | None = None) -> None:
+        return
 
     def _resolve_voice(self, voice_hint: str | None) -> str | None:
         if not voice_hint:
@@ -66,7 +77,7 @@ class MacSaySpeaker:
 
         return voice_hint
 
-    def speak(self, text: str) -> None:
+    def speak(self, text: str, key: int | None = None) -> None:
         if not text:
             return
 
@@ -99,6 +110,9 @@ class Pyttsx3Speaker:
         if voice_hint:
             self._select_voice(voice_hint)
 
+    def prefetch(self, text: str, key: int | None = None) -> None:
+        return
+
     def _select_voice(self, voice_hint: str) -> None:
         voice_hint = voice_hint.lower()
         voices = self.engine.getProperty("voices")
@@ -108,7 +122,7 @@ class Pyttsx3Speaker:
                 self.engine.setProperty("voice", voice.id)
                 return
 
-    def speak(self, text: str) -> None:
+    def speak(self, text: str, key: int | None = None) -> None:
         if not text:
             return
         self.engine.say(text)
@@ -154,6 +168,13 @@ class ElevenLabsSpeaker:
         self.output_format = output_format
         self.timeout = max(10.0, request_timeout_seconds)
         self._player = self._resolve_player()
+        self._active: subprocess.Popen[bytes] | None = None
+        self._prefetch_lock = threading.Lock()
+        self._prefetched_audio: dict[int, Future[bytes]] = {}
+        self._executor = ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="doc-reader-elevenlabs",
+        )
 
     def _resolve_player(self) -> list[str]:
         afplay = shutil.which("afplay")
@@ -166,11 +187,9 @@ class ElevenLabsSpeaker:
 
         raise RuntimeError("No audio player found. Install ffplay or use macOS afplay.")
 
-    def speak(self, text: str) -> None:
+    def _synthesize_audio(self, text: str) -> bytes:
         if not text:
-            return
-
-        temp_audio_path: str | None = None
+            return b""
 
         try:
             url = f"https://api.elevenlabs.io/v1/text-to-speech/{self.voice_id}/stream"
@@ -199,23 +218,54 @@ class ElevenLabsSpeaker:
                         f"{_extract_error_message(response)}"
                     )
 
-                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as handle:
-                    temp_audio_path = handle.name
-                    for chunk in response.iter_content(chunk_size=16384):
-                        if chunk:
-                            handle.write(chunk)
+                audio_chunks = [
+                    chunk
+                    for chunk in response.iter_content(chunk_size=16384)
+                    if chunk
+                ]
 
-            if not temp_audio_path or not os.path.exists(temp_audio_path):
+            audio = b"".join(audio_chunks)
+            if not audio:
                 raise RuntimeError("ElevenLabs returned no audio data.")
-
-            command = [*self._player, temp_audio_path]
-            subprocess.run(command, check=True)
-
+            return audio
         except self.requests.RequestException as exc:
             raise RuntimeError(f"ElevenLabs network error: {exc}") from exc
+
+    def prefetch(self, text: str, key: int | None = None) -> None:
+        if not text or key is None:
+            return
+
+        with self._prefetch_lock:
+            if key in self._prefetched_audio:
+                return
+            self._prefetched_audio[key] = self._executor.submit(self._synthesize_audio, text)
+
+    def speak(self, text: str, key: int | None = None) -> None:
+        if not text:
+            return
+
+        future: Future[bytes] | None = None
+        if key is not None:
+            with self._prefetch_lock:
+                future = self._prefetched_audio.pop(key, None)
+
+        temp_audio_path: str | None = None
+
+        try:
+            audio = future.result() if future is not None else self._synthesize_audio(text)
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as handle:
+                temp_audio_path = handle.name
+                handle.write(audio)
+
+            command = [*self._player, temp_audio_path]
+            self._active = subprocess.Popen(command)
+            return_code = self._active.wait()
+            if return_code != 0:
+                raise subprocess.CalledProcessError(return_code, command)
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(f"Audio playback failed with exit code {exc.returncode}") from exc
         finally:
+            self._active = None
             if temp_audio_path and os.path.exists(temp_audio_path):
                 try:
                     os.remove(temp_audio_path)
@@ -223,6 +273,14 @@ class ElevenLabsSpeaker:
                     pass
 
     def close(self) -> None:
+        if self._active and self._active.poll() is None:
+            self._active.terminate()
+        with self._prefetch_lock:
+            prefetched = list(self._prefetched_audio.values())
+            self._prefetched_audio.clear()
+        for future in prefetched:
+            future.cancel()
+        self._executor.shutdown(wait=False, cancel_futures=True)
         return
 
 

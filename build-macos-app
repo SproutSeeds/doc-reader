@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "[doc-reader] Native macOS app build is only available on macOS." >&2
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_ROOT="${1:-$HOME/.doc-reader-managed}"
+APP_BUNDLE="$APP_ROOT/Doc Reader.app"
+CONTENTS="$APP_BUNDLE/Contents"
+MACOS="$CONTENTS/MacOS"
+RESOURCES="$CONTENTS/Resources"
+SOURCE="$SCRIPT_DIR/macos/DocReaderApp/Sources/DocReaderApp/main.swift"
+EXECUTABLE="$MACOS/DocReader"
+INFO_PLIST="$CONTENTS/Info.plist"
+
+if ! command -v swiftc >/dev/null 2>&1; then
+  echo "[doc-reader] swiftc is required to build the native macOS wrapper." >&2
+  exit 1
+fi
+
+if [[ ! -f "$SOURCE" ]]; then
+  echo "[doc-reader] Missing native app source: $SOURCE" >&2
+  exit 1
+fi
+
+mkdir -p "$MACOS" "$RESOURCES"
+
+swiftc \
+  -swift-version 5 \
+  -O \
+  -framework AppKit \
+  -framework Security \
+  "$SOURCE" \
+  -o "$EXECUTABLE"
+
+cat > "$INFO_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>DocReader</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.sproutseeds.read-docs</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Doc Reader</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.1</string>
+    <key>CFBundleVersion</key>
+    <string>0.1.1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+  </dict>
+</plist>
+PLIST
+
+plutil -lint "$INFO_PLIST" >/dev/null
+echo "[doc-reader] Built native app: $APP_BUNDLE"

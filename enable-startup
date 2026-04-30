@@ -8,6 +8,10 @@ PLIST_PATH="$PLIST_DIR/$LABEL.plist"
 LOG_DIR="$HOME/Library/Logs"
 APP_DIR="$HOME/.doc-reader-managed"
 RUNNER="$APP_DIR/run-doc-reader"
+VENV_DIR="$APP_DIR/.venv"
+NATIVE_APP="$APP_DIR/Doc Reader.app"
+NATIVE_EXECUTABLE="$NATIVE_APP/Contents/MacOS/DocReader"
+PROGRAM="$RUNNER"
 
 if [[ ! -x "$SCRIPT_DIR/run-doc-reader" ]]; then
   echo "[doc-reader] $SCRIPT_DIR/run-doc-reader is missing or not executable." >&2
@@ -17,8 +21,12 @@ if [[ ! -x "$SCRIPT_DIR/read-selection-service.sh" ]]; then
   echo "[doc-reader] $SCRIPT_DIR/read-selection-service.sh is missing or not executable." >&2
   exit 1
 fi
+if [[ ! -x "$SCRIPT_DIR/build-macos-app" ]]; then
+  echo "[doc-reader] $SCRIPT_DIR/build-macos-app is missing or not executable." >&2
+  exit 1
+fi
 
-# Install a managed copy outside ~/Documents so launchd can execute it reliably.
+# Install a managed app copy outside the npm package so launchd owns runtime lifecycle.
 mkdir -p "$APP_DIR"
 cp "$SCRIPT_DIR/run-doc-reader" "$APP_DIR/run-doc-reader"
 chmod +x "$APP_DIR/run-doc-reader"
@@ -27,9 +35,13 @@ chmod +x "$APP_DIR/read-selection-service.sh"
 cp "$SCRIPT_DIR/requirements.txt" "$APP_DIR/requirements.txt"
 rm -rf "$APP_DIR/doc_reader"
 cp -R "$SCRIPT_DIR/doc_reader" "$APP_DIR/doc_reader"
+"$SCRIPT_DIR/build-macos-app" "$APP_DIR"
+if [[ -x "$NATIVE_EXECUTABLE" ]]; then
+  PROGRAM="$NATIVE_EXECUTABLE"
+fi
 
 # Ensure env/deps are ready before launchctl starts it.
-"$RUNNER" --prepare-only
+DOC_READER_VENV_DIR="$VENV_DIR" "$RUNNER" --prepare-only
 
 mkdir -p "$PLIST_DIR" "$LOG_DIR"
 
@@ -43,14 +55,14 @@ cat > "$PLIST_PATH" <<PLIST
 
     <key>ProgramArguments</key>
     <array>
-      <string>$RUNNER</string>
+      <string>$PROGRAM</string>
     </array>
 
     <key>RunAtLoad</key>
     <true/>
 
     <key>KeepAlive</key>
-    <true/>
+    <false/>
 
     <key>ProcessType</key>
     <string>Interactive</string>
@@ -63,20 +75,37 @@ cat > "$PLIST_PATH" <<PLIST
 
     <key>WorkingDirectory</key>
     <string>$APP_DIR</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>DOC_READER_VENV_DIR</key>
+      <string>$VENV_DIR</string>
+    </dict>
   </dict>
 </plist>
 PLIST
 
 if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
-  launchctl enable "gui/$UID/$LABEL" >/dev/null 2>&1 || true
-  launchctl kickstart -k "gui/$UID/$LABEL"
-else
-  launchctl bootstrap "gui/$UID" "$PLIST_PATH"
-  launchctl enable "gui/$UID/$LABEL"
-  launchctl kickstart -k "gui/$UID/$LABEL"
+  launchctl bootout "gui/$UID/$LABEL" >/dev/null 2>&1 || true
 fi
+launchctl bootout "gui/$UID" "$PLIST_PATH" >/dev/null 2>&1 || true
+BOOTSTRAPPED=0
+for _attempt in 1 2 3; do
+  if launchctl bootstrap "gui/$UID" "$PLIST_PATH"; then
+    BOOTSTRAPPED=1
+    break
+  fi
+  sleep 1
+done
+if [[ "$BOOTSTRAPPED" != "1" ]]; then
+  echo "[doc-reader] Could not bootstrap LaunchAgent: $PLIST_PATH" >&2
+  exit 1
+fi
+launchctl enable "gui/$UID/$LABEL"
+launchctl kickstart -k "gui/$UID/$LABEL"
 
-echo "[doc-reader] Startup enabled."
+echo "[doc-reader] App agent installed and started."
 echo "[doc-reader] LaunchAgent: $PLIST_PATH"
 echo "[doc-reader] Managed install: $APP_DIR"
-echo "[doc-reader] It will auto-start at login and should now be running."
+echo "[doc-reader] Native app: $NATIVE_APP"
+echo "[doc-reader] It will start at login and can be controlled with read-docs start/stop/status."

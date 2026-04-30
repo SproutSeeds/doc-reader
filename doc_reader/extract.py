@@ -64,6 +64,7 @@ def _iter_pdf_blocks(path: Path, *, preserve_all: bool) -> Iterator[DocumentBloc
     for page_number, page in enumerate(reader.pages, start=1):
         raw_text = page.extract_text() or ""
         lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+        lines = [line for line in lines if not _looks_like_layout_noise_line(line)]
         if not lines:
             continue
 
@@ -199,6 +200,24 @@ def _looks_like_running_edge(line: str) -> bool:
     if re.search(r"(?:page\s+)?\d+(?:\s*/\s*\d+)?", line, flags=re.IGNORECASE):
         return True
     return len(line.split()) <= 10
+
+
+def _looks_like_layout_noise_line(line: str) -> bool:
+    cleaned = _clean_inline(line)
+    if not cleaned:
+        return True
+    if _is_noise_block(cleaned):
+        return True
+    if re.fullmatch(r"[•·▪◦*]+", cleaned):
+        return True
+    if re.fullmatch(r"[._\-—=~•·▪◦*\s]{6,}", cleaned):
+        return True
+    if re.fullmatch(
+        r"(?:[•·▪◦*]\s*)?\d+(?:\s+\d+){2,}(?:\s*[•·▪◦*]\s*\d+(?:\s+\d+)*)*",
+        cleaned,
+    ):
+        return True
+    return False
 
 
 def _iter_text_lines(path: Path) -> Iterator[str]:

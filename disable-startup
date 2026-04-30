@@ -11,4 +11,4 @@ if [[ -f "$PLIST_PATH" ]]; then
   rm -f "$PLIST_PATH"
 fi
 
-echo "[doc-reader] Startup disabled."
+echo "[doc-reader] App agent disabled."

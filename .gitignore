@@ -12,6 +12,8 @@ ENV/
 # Packaging / build artifacts
 build/
 dist/
+*.tgz
+*.tar.gz
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
