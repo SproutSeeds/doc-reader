@@ -1566,6 +1566,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastSavedRecordingContentType = ""
     private var lastSavedRecordingPeakLevel = 0.0
     private var lastSavedRecordingCreatedAt: TimeInterval = 0
+    private var webReadingPaused = false
+    private var webActiveItemID: String?
     private let optionKeyCodes: Set<UInt16> = [58, 61]
     private let rightCommandKeyCode: UInt16 = 54
     private let readSelectedTextKeyCode: UInt16 = 15
@@ -1713,6 +1715,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func togglePause() {
+        if webReadingPaused, let itemID = webActiveItemID, !itemID.isEmpty {
+            postWebJSON(
+                path: "/api/items/\(urlPathComponent(itemID))/play",
+                payload: nil,
+                openWhenDone: false
+            )
+            return
+        }
         postWebJSON(path: "/api/pause", payload: nil, openWhenDone: false)
     }
 
@@ -2686,6 +2696,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             guard let http = response as? HTTPURLResponse, http.statusCode == 200, let data else {
                 DispatchQueue.main.async {
+                    self.webReadingPaused = false
+                    self.webActiveItemID = nil
                     self.statusMenuItem.title = "DocReader web app is not reachable."
                     self.updateMenuControls(running: false, paused: false)
                     completion?()
@@ -2696,11 +2708,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             let status = payload?["status"] as? String ?? "DocReader web app ready."
             let running = payload?["running"] as? Bool ?? false
             let paused = payload?["paused"] as? Bool ?? false
+            let activeID = payload?["active_id"] as? String ?? ""
             let stt = payload?["stt"] as? [String: Any]
             let sttEnabled = stt?["enabled"] as? Bool ?? false
             let microphone = stt?["microphone"] as? [String: Any]
             let selectedMicrophoneID = microphone?["selected_id"] as? String ?? ""
             DispatchQueue.main.async {
+                self.webReadingPaused = paused
+                self.webActiveItemID = activeID.isEmpty ? nil : activeID
                 self.dictationEnabled = sttEnabled
                 self.selectedMicrophoneID = selectedMicrophoneID
                 if sttEnabled {
@@ -2747,6 +2762,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func webURL(path: String) -> URL {
         URL(string: path, relativeTo: webBaseURL)!.absoluteURL
+    }
+
+    private func urlPathComponent(_ value: String) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
     private func kickstartWebLaunchAgent() {

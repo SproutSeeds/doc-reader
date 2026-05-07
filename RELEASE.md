@@ -25,6 +25,11 @@ managed app/status controls for the installed macOS helper.
 `launchctl bootstrap` retry does not print a scary error when the agent still
 starts successfully.
 
+## 0.2.2
+
+`0.2.2` fixes the macOS menu-bar `Resume Web Reading` control so it resumes the
+paused web reading card instead of sending another pause request.
+
 Before publishing:
 
 ```bash
