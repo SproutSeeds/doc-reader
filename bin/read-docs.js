@@ -111,6 +111,20 @@ function run(command, args, options = {}) {
   });
 }
 
+function runSilent(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    env: options.env || process.env,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    error: result.error,
+  };
+}
+
 function macOnly(commandName) {
   if (process.platform === "darwin") {
     return true;
@@ -953,18 +967,24 @@ async function startWebAgent() {
     return cleanupExitCode;
   }
   let bootstrapExitCode = 1;
+  let bootstrapError = "";
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    bootstrapExitCode = await run("launchctl", [
+    const bootstrapResult = runSilent("launchctl", [
       "bootstrap",
       launchAgentDomain(),
       webLaunchAgentPlist,
     ]);
+    bootstrapExitCode = bootstrapResult.status;
+    bootstrapError = bootstrapResult.stderr.trim() || bootstrapResult.stdout.trim();
     if (bootstrapExitCode === 0 || isWebLaunchAgentLoaded()) {
       break;
     }
     await new Promise((resolve) => setTimeout(resolve, 800));
   }
   if (bootstrapExitCode !== 0 && !isWebLaunchAgentLoaded()) {
+    if (bootstrapError) {
+      console.error(bootstrapError);
+    }
     return bootstrapExitCode;
   }
   spawnSync("launchctl", ["enable", webLaunchAgentTarget()], {

@@ -19,6 +19,12 @@ Mac-local Kokoro fallback, 4090 Whisper dictation, microphone selection,
 one-key Option dictation, one-key Right Command selected-text readback, and
 managed app/status controls for the installed macOS helper.
 
+## 0.2.1
+
+`0.2.1` cleans up the macOS web-agent restart path so an expected transient
+`launchctl bootstrap` retry does not print a scary error when the agent still
+starts successfully.
+
 Before publishing:
 
 ```bash

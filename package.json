@@ -1,6 +1,6 @@
 {
   "name": "read-docs",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "macOS-first bootstrapper for a local streaming document reader.",
   "license": "MIT",
   "type": "module",
