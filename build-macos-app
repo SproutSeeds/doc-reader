@@ -13,8 +13,10 @@ CONTENTS="$APP_BUNDLE/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 SOURCE="$SCRIPT_DIR/macos/DocReaderApp/Sources/DocReaderApp/main.swift"
+ICON_SOURCE="$SCRIPT_DIR/macos/DocReaderApp/Tools/generate-app-icon.swift"
 EXECUTABLE="$MACOS/DocReader"
 INFO_PLIST="$CONTENTS/Info.plist"
+ICON_ICNS="$RESOURCES/DocReaderIcon.icns"
 
 if ! command -v swiftc >/dev/null 2>&1; then
   echo "[doc-reader] Apple's Command Line Tools are required to build the native macOS wrapper." >&2
@@ -36,6 +38,8 @@ swiftc \
   -swift-version 5 \
   -O \
   -framework AppKit \
+  -framework ApplicationServices \
+  -framework AVFoundation \
   -framework Security \
   "$SOURCE" \
   -o "$EXECUTABLE"
@@ -53,6 +57,8 @@ cat > "$INFO_PLIST" <<PLIST
     <string>com.sproutseeds.read-docs</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleIconFile</key>
+    <string>DocReaderIcon</string>
     <key>CFBundleName</key>
     <string>Doc Reader</string>
     <key>CFBundlePackageType</key>
@@ -67,9 +73,52 @@ cat > "$INFO_PLIST" <<PLIST
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Doc Reader records microphone audio for opt-in local 4090 dictation.</string>
+    <key>NSInputMonitoringUsageDescription</key>
+    <string>Doc Reader watches the Option key for opt-in hold-to-record dictation.</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Doc Reader inserts completed dictation into the active text field when you enable automatic insertion.</string>
   </dict>
 </plist>
 PLIST
 
 plutil -lint "$INFO_PLIST" >/dev/null
+
+if [[ -f "$ICON_SOURCE" ]]; then
+  if ! command -v iconutil >/dev/null 2>&1; then
+    echo "[doc-reader] iconutil is required to build the native app icon." >&2
+    exit 1
+  fi
+  ICON_TMP="$(mktemp -d "${TMPDIR:-/tmp}/doc-reader-icon.XXXXXX")"
+  trap 'rm -rf "${ICON_TMP:-}"' EXIT
+  swift "$ICON_SOURCE" "$ICON_TMP/DocReaderIcon.iconset"
+  iconutil -c icns "$ICON_TMP/DocReaderIcon.iconset" -o "$ICON_ICNS"
+  echo "[doc-reader] Built native app icon: $ICON_ICNS"
+fi
+
+SIGN_IDENTITY="${DOC_READER_CODESIGN_IDENTITY:-}"
+if [[ -z "$SIGN_IDENTITY" ]] && command -v security >/dev/null 2>&1; then
+  SIGN_IDENTITY="$(
+    security find-identity -v -p codesigning 2>/dev/null \
+      | sed -n 's/.*"\(Developer ID Application: [^"]*\)".*/\1/p' \
+      | head -n 1
+  )"
+fi
+if [[ -z "$SIGN_IDENTITY" ]] && command -v security >/dev/null 2>&1; then
+  SIGN_IDENTITY="$(
+    security find-identity -v -p codesigning 2>/dev/null \
+      | sed -n 's/.*"\(Apple Development: [^"]*\)".*/\1/p' \
+      | head -n 1
+  )"
+fi
+
+if [[ -n "$SIGN_IDENTITY" ]]; then
+  codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
+  echo "[doc-reader] Signed native app with: $SIGN_IDENTITY"
+elif command -v codesign >/dev/null 2>&1; then
+  codesign --force --deep --sign - "$APP_BUNDLE"
+  echo "[doc-reader] Signed native app ad-hoc."
+fi
+
 echo "[doc-reader] Built native app: $APP_BUNDLE"

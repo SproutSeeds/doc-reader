@@ -13,11 +13,12 @@ It is designed to start speaking quickly from the first chunk, then keep playbac
 
 ## Why this exists
 
-- Does not ship a shared ElevenLabs key; cloud voices are opt-in per user.
-- Uses local text-to-speech by default (`say` on macOS, with optional `pyttsx3` fallback for the CLI).
+- Does not ship a shared OpenAI key; OpenAI speech is explicit and uses your local environment, macOS Keychain, or ORP secrets.
+- Can use private local neural speech through a Tailscale-connected 4090 or a Mac-local Kokoro sidecar, with local `say` fallback on macOS.
+- Can use the Tailscale-connected 4090 for opt-in speech-to-text dictation with no API key.
 - Reads with understanding in `smart` mode instead of spelling every character.
 - Prefetches chunks so playback remains continuous.
-- Supports optional ElevenLabs speech output when you want cloud voices.
+- Supports persistent reading history, pause/resume, and selectable speech backends.
 
 ## Platform support
 
@@ -53,11 +54,119 @@ Useful app commands:
 
 ```bash
 read-docs start
+read-docs open
+read-docs dock
 read-docs stop
 read-docs restart
 read-docs status
 read-docs uninstall
 ```
+
+The installer also creates `~/Applications/Doc Reader.app` with the native app
+icon and registers it with Launch Services. You can launch it from Applications,
+Spotlight, or the Dock. The Dock/menu-bar app opens the web page, which is the
+canonical DocReader interface.
+
+## Canonical web app
+
+Doc Reader runs as a local web app and can be exposed to your tailnet:
+
+```bash
+read-docs tailscale
+read-docs web-status
+```
+
+By default, the local service listens on `http://127.0.0.1:8766`. Tailscale
+Serve can expose the same page at `https://<this-machine>:8766` inside the
+tailnet. The web app supports document upload, text reading, History cards,
+play, pause, resume, stop, and voice settings.
+
+Local-only controls:
+
+```bash
+read-docs web-start
+read-docs web-stop
+read-docs web
+```
+
+## Local neural text-to-speech
+
+Doc Reader can run private neural speech sidecars and use them before paid API
+speech. The strict 4090 backend is the default for app playback and uses only
+the Umbra Tailnet TTS service:
+
+```text
+Strict 4090 (Kokoro)
+```
+
+The optional local fallback backend stays local and never calls OpenAI:
+
+```text
+4090 Kokoro -> Mac Kokoro -> 4090 Chatterbox -> macOS say
+```
+
+Doc Reader cleans Markdown/code-heavy text and splits long passages before they
+reach the neural TTS sidecars. Chatterbox is still available as a selectable
+voice, but strict 4090 mode favors Kokoro for steadier document playback.
+
+Set up the 4090 service on the Windows machine reachable as `Umbra`:
+
+```bash
+read-docs tts-umbra-install
+read-docs tts-umbra-status
+```
+
+Set up the Mac-local Kokoro service:
+
+```bash
+read-docs tts-mac-start
+read-docs tts-mac-status
+```
+
+Run a benchmark and generate sample files:
+
+```bash
+read-docs tts-bench
+```
+
+Benchmark reports and sample audio are saved under
+`~/.doc-reader-managed/tts-benchmarks/`.
+
+## Local 4090 speech-to-text
+
+Doc Reader can also use the Umbra 4090 service for local dictation through
+Whisper. This path is opt-in, runs through Tailscale, and does not call an API.
+
+Setup is part of the Umbra service install:
+
+```bash
+read-docs tts-umbra-install
+read-docs tts-umbra-start
+read-docs restart
+```
+
+Open the canonical web app and enable `Hold Option for 4090 dictation`. Choose
+the microphone from the Dictation settings if the system default is not the
+input you want. Put the cursor in a text field, then hold the Option/Alt key to
+record from the selected Mac microphone. Doc Reader shows a small recording HUD
+while the key is held, sends the audio to Umbra when the key is released,
+inserts the transcription at the cursor, and adds the transcription as a
+`Dictation` card in the web app.
+
+The web app keeps read-aloud cards and dictation cards in separate lists.
+Dictation cards have a copy icon button; clicking it copies the full text and
+briefly switches the button to a green checkmark.
+
+The first transcription can take longer while `large-v3` loads on the 4090.
+After warmup, short dictations should return quickly. macOS may ask for
+microphone permission the first time the native app records audio. The web app
+shows the selected input device, microphone authorization, Accessibility, and
+Input Monitoring state. It also shows whether the native app helper is online;
+use `Start Helper` if the web page is up but the hold-Option listener is not
+running. If the HUD does not appear while Doc Reader is in the background, allow
+`Doc Reader.app` in macOS Privacy & Security for Input Monitoring. Accessibility
+is also required for automatic insertion into the active text field; without it,
+Doc Reader copies the transcription to the clipboard.
 
 ## Quick start: source checkout
 
@@ -114,37 +223,36 @@ Optional fallback TTS engine:
 ./.venv/bin/python -m pip install pyttsx3
 ```
 
-## ElevenLabs (optional)
+## OpenAI text-to-speech
 
-The package does not include an ElevenLabs API key. For cloud voices, provide your
-own key with `ELEVENLABS_API_KEY` or paste it into the tray panel. Keys entered in
-the tray are stored only in local OS settings for that computer; clear the field
-and press Enter to remove the saved key.
+OpenAI remains available as an explicit speech backend. The app checks
+`OPENAI_API_KEY`, Doc Reader's macOS Keychain item, and ORP's local
+`openai-primary` Keychain secret when `--speech-backend openai` is selected.
 
 CLI with environment variables:
 
 ```bash
-export ELEVENLABS_API_KEY=\"your_api_key_here\"
-export ELEVENLABS_VOICE_ID=\"your_voice_id_here\"
-./run-doc-reader --speech-backend elevenlabs
+export OPENAI_API_KEY="your_api_key_here"
+./run-doc-reader --speech-backend openai
 ```
 
 CLI with explicit flags:
 
 ```bash
 ./run-doc-reader \
-  --speech-backend elevenlabs \
-  --elevenlabs-voice-id your_voice_id_here \
-  --elevenlabs-model-id eleven_multilingual_v2 \
-  --elevenlabs-output-format mp3_44100_128
+  --speech-backend openai \
+  --openai-model gpt-4o-mini-tts \
+  --openai-voice marin \
+  --openai-response-format wav
 ```
 
 App usage:
 
 - Open the panel from the menu bar icon.
 - Choose a document, read clipboard text, or paste text into the reader window.
-- Open `Settings...` to choose system speech or ElevenLabs.
-- Paste an ElevenLabs API key into settings and load voices if you want cloud voices.
+- Use the History cards to pause, resume, and switch between saved readings.
+- Choose Strict 4090, 4090 Chatterbox, 4090 Kokoro, Mac Kokoro, OpenAI API, or system speech.
+- Store an OpenAI key in the macOS Keychain or ORP secrets for remote voices.
 - Click `Stop Reading` from the menu bar item to stop active playback.
 
 ## macOS menu-bar app
@@ -163,21 +271,31 @@ python -m doc_reader.tray
 
 What it gives you:
 
-- Native menu-bar app shell (`Doc Reader.app`) instead of a Python Dock app.
-- `Open Doc Reader` for pasted text reading.
-- `Choose Document...` for `.pdf`, `.docx`, `.txt`, `.md`, and `.markdown`.
-- `Read Clipboard` for quick text playback.
-- `Stop Reading` for active playback.
-- `Settings...` for full/smart mode, system speech, and ElevenLabs voice setup.
-- ElevenLabs API keys stored in the macOS Keychain.
-- Right-click Services integration for highlighted text.
+- Native menu-bar app shell (`Doc Reader.app`) with a formal app icon that opens the canonical web page.
+- Applications/Dock launcher at `~/Applications/Doc Reader.app`.
+- Tailnet web app through `read-docs tailscale`.
+- `Open DocReader Page` opens `http://127.0.0.1:8766`.
+- `Read Clipboard in DocReader` posts clipboard text into the web History cards.
+- Pause/resume and stop controls call the web app.
+- Persistent History cards for documents, pasted text, clipboard text, and highlighted text.
+- Optional Option/Alt hold-to-record dictation with microphone selection, 4090 Whisper, active-field insertion, and copyable Dictation cards.
+- Web settings for strict 4090, Mac-local, OpenAI API, and system speech.
+- OpenAI API keys are loaded only when OpenAI API is explicitly selected.
+- Right-click Services integration sends highlighted text into the web app.
 
 The older PySide tray module remains in the source tree as a development fallback,
 but the npm app path uses the native macOS wrapper.
 
 ## Right-click menu (macOS Services)
 
-Install a native `Services` entry so highlighted text can be read from right-click menus:
+The native macOS helper can read highlighted text from the keyboard. Highlight
+text in any app and tap the right Command key; Doc Reader copies the selection,
+restores your clipboard, creates a reading card in the web app, and starts
+playback through the selected TTS backend. `Control+Command+R` is also accepted
+as a fallback.
+
+Install a native `Services` entry as a fallback so highlighted text can also be
+read from right-click menus:
 
 ```bash
 read-docs install
@@ -192,7 +310,9 @@ Then in any app:
 2. Right click.
 3. Choose `Services -> Read with Doc Reader`.
 
-This Services flow does not use synthetic keystrokes.
+The Services flow uses macOS text input directly. If an app invokes the Service
+but passes empty or partial text, the helper makes a clipboard-preserving copy
+attempt and logs the selected-text handoff count to `~/Library/Logs/doc-reader-service.log`.
 
 Remove it later with:
 

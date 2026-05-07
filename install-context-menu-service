@@ -26,6 +26,9 @@ rm -rf "$SERVICE_PATH/Contents/_CodeSignature" "$SERVICE_PATH/Contents/QuickLook
 "$PLISTBUDDY" -c "Delete :NSServices:0:NSRequiredContext" "$INFO_PLIST" >/dev/null 2>&1 || true
 "$PLISTBUDDY" -c "Set :NSServices:0:NSMenuItem:default Read with Doc Reader" "$INFO_PLIST"
 "$PLISTBUDDY" -c "Set :NSServices:0:NSSendTypes:0 public.utf8-plain-text" "$INFO_PLIST"
+"$PLISTBUDDY" -c "Add :NSServices:0:NSSendTypes:1 string public.plain-text" "$INFO_PLIST" >/dev/null 2>&1 || true
+"$PLISTBUDDY" -c "Add :NSServices:0:NSSendTypes:2 string public.text" "$INFO_PLIST" >/dev/null 2>&1 || true
+"$PLISTBUDDY" -c "Add :NSServices:0:NSSendTypes:3 string NSStringPboardType" "$INFO_PLIST" >/dev/null 2>&1 || true
 "$PLISTBUDDY" -c "Set :NSServices:0:NSMessage runWorkflowAsService" "$INFO_PLIST"
 
 "$PLISTBUDDY" -c "Set :actions:0:action:ActionParameters:shell /bin/zsh" "$WFLOW_PLIST"

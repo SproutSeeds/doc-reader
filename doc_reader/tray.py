@@ -45,16 +45,42 @@ except ModuleNotFoundError as exc:  # pragma: no cover - runtime dependency guar
     ) from exc
 
 from .extract import iter_document_blocks
+from .speech import (
+    OPENAI_TTS_INSTRUCTIONS,
+    OPENAI_TTS_MODEL,
+    OPENAI_TTS_RESPONSE_FORMAT,
+    OPENAI_TTS_VOICE,
+    OPENAI_TTS_VOICES,
+    resolve_openai_api_key,
+)
 
 SUPPORTED_SUFFIXES = {".pdf", ".docx", ".txt", ".md", ".markdown"}
 DEFAULT_MODE = "full"
 DEFAULT_STYLE = "balanced"
 DEFAULT_RATE = 180
 MAX_SYSTEM_VOICES = 8
-MAX_ELEVENLABS_VOICES = 50
-ELEVENLABS_USER_URL = "https://api.elevenlabs.io/v1/user"
-ELEVENLABS_VOICES_URL = "https://api.elevenlabs.io/v2/voices"
+OPENAI_TTS_VOICE_LABELS = [
+    "marin",
+    "cedar",
+    "coral",
+    "alloy",
+    "ash",
+    "ballad",
+    "echo",
+    "fable",
+    "nova",
+    "onyx",
+    "sage",
+    "shimmer",
+    "verse",
+]
 SYSTEM_BACKEND = "macsay" if sys.platform == "darwin" else "pyttsx3"
+LOCAL_TTS_OPTIONS = [
+    ("Strict 4090 (Kokoro)", "tailscale-4090"),
+    ("4090 Kokoro", "tailscale-kokoro"),
+    ("4090 Chatterbox (experimental)", "tailscale-chatterbox"),
+    ("Mac Kokoro", "local-kokoro"),
+]
 DEFAULT_SELECTION_SHORTCUT = "<ctrl>+<alt>+<cmd>+r"
 SELECTION_SHORTCUT = os.getenv("DOC_READER_SELECTION_SHORTCUT", DEFAULT_SELECTION_SHORTCUT)
 SELECTION_SHORTCUT_LABEL = "Control+Option+Command+R"
@@ -167,130 +193,6 @@ def _load_system_voices(limit: int = MAX_SYSTEM_VOICES) -> list[str]:
     ordered.extend(name for name in voices if name not in ordered)
 
     return ordered[: max(1, limit)]
-
-
-def _extract_elevenlabs_error_message(response) -> str:
-    message = f"HTTP {response.status_code}"
-    try:
-        payload = response.json()
-    except ValueError:
-        body = (response.text or "").strip()
-        return body[:200] if body else message
-
-    if not isinstance(payload, dict):
-        return message
-
-    detail = payload.get("detail")
-    if isinstance(detail, str) and detail.strip():
-        return detail.strip()
-    if isinstance(detail, dict):
-        detail_message = detail.get("message")
-        if isinstance(detail_message, str) and detail_message.strip():
-            return detail_message.strip()
-    return message
-
-
-def _load_elevenlabs_voices(
-    api_key: str,
-    limit: int = MAX_ELEVENLABS_VOICES,
-) -> tuple[list[tuple[str, str]], str | None]:
-    key = api_key.strip()
-    if not key:
-        return [], "API key is empty."
-
-    try:
-        import requests
-    except ModuleNotFoundError:
-        return [], "Missing requests dependency."
-
-    page_size = max(10, min(100, max(1, limit)))
-    voices_by_id: dict[str, str] = {}
-    next_page_token: str | None = None
-
-    try:
-        while True:
-            params: dict[str, object] = {
-                "page_size": page_size,
-                "include_total_count": "false",
-            }
-            if next_page_token:
-                params["next_page_token"] = next_page_token
-
-            response = requests.get(
-                ELEVENLABS_VOICES_URL,
-                headers={"xi-api-key": key, "Accept": "application/json"},
-                params=params,
-                timeout=10,
-            )
-            if response.status_code >= 400:
-                return [], _extract_elevenlabs_error_message(response)
-
-            payload = response.json()
-            if not isinstance(payload, dict):
-                return [], "Unexpected response shape from ElevenLabs voices API."
-
-            raw_voices = payload.get("voices")
-            if not isinstance(raw_voices, list):
-                return [], "Unexpected ElevenLabs voice list payload."
-
-            for item in raw_voices:
-                if not isinstance(item, dict):
-                    continue
-                name = item.get("name")
-                voice_id = item.get("voice_id")
-                if not isinstance(voice_id, str):
-                    voice_id = item.get("voiceId")
-                if isinstance(name, str) and isinstance(voice_id, str) and name and voice_id:
-                    voices_by_id[voice_id] = name
-
-            if len(voices_by_id) >= limit:
-                break
-
-            token = payload.get("next_page_token")
-            if not isinstance(token, str):
-                token = payload.get("nextPageToken")
-            if not isinstance(token, str) or not token.strip():
-                break
-            next_page_token = token.strip()
-    except requests.RequestException as exc:
-        return [], f"Network error: {exc}"
-    except ValueError:
-        return [], "Invalid JSON from ElevenLabs voices API."
-    except Exception as exc:  # noqa: BLE001
-        return [], f"Unexpected error: {exc}"
-
-    voices = [(name, voice_id) for voice_id, name in voices_by_id.items()]
-    voices.sort(key=lambda pair: pair[0].lower())
-    if not voices:
-        return [], "No voices returned for this account."
-    return voices[: max(1, limit)], None
-
-
-def _validate_elevenlabs_api_key(api_key: str, timeout_seconds: float = 8.0) -> tuple[bool, str]:
-    key = api_key.strip()
-    if not key:
-        return False, "API key is empty."
-
-    try:
-        import requests
-    except ModuleNotFoundError:
-        return False, "Missing requests dependency."
-
-    try:
-        response = requests.get(
-            ELEVENLABS_USER_URL,
-            headers={"xi-api-key": key, "Accept": "application/json"},
-            timeout=timeout_seconds,
-        )
-    except Exception as exc:  # noqa: BLE001
-        return False, f"Network error: {exc}"
-
-    if response.status_code == 200:
-        return True, "Connected."
-
-    if response.status_code in {401, 403}:
-        return False, "Invalid API key."
-    return False, _extract_elevenlabs_error_message(response)
 
 
 def _word_count_inline(text: str) -> int:
@@ -627,7 +529,10 @@ class ReaderRunner(QObject):
         *,
         speech_backend: str,
         voice_value: str | None,
-        elevenlabs_api_key: str | None,
+        openai_api_key: str | None,
+        openai_model: str,
+        openai_response_format: str,
+        openai_instructions: str,
         start_seconds: float = 0.0,
         start_chunk_index: int = 0,
         track_progress: bool = True,
@@ -654,14 +559,24 @@ class ReaderRunner(QObject):
             "--verbose",
         ]
 
-        if speech_backend == "elevenlabs" and voice_value:
-            args.extend(["--elevenlabs-voice-id", voice_value])
+        if speech_backend == "openai":
+            args.extend(["--openai-model", openai_model])
+            args.extend(["--openai-response-format", openai_response_format])
+            if voice_value:
+                args.extend(["--openai-voice", voice_value])
+            if openai_instructions:
+                args.extend(["--openai-instructions", openai_instructions])
         elif speech_backend in {"macsay", "pyttsx3"} and voice_value:
             args.extend(["--voice", voice_value])
 
         env = QProcessEnvironment.systemEnvironment()
-        if elevenlabs_api_key:
-            env.insert("ELEVENLABS_API_KEY", elevenlabs_api_key)
+        if speech_backend == "openai" and openai_api_key:
+            env.insert("OPENAI_API_KEY", openai_api_key)
+        elif speech_backend != "openai":
+            env.insert("DOC_READER_AUTO_ALLOW_OPENAI", "0")
+            for key in ("OPENAI_API_KEY", "DOC_READER_OPENAI_API_KEY"):
+                if env.contains(key):
+                    env.remove(key)
         self._process.setProcessEnvironment(env)
 
         self.statusChanged.emit(f"Starting: {source_file.name}")
@@ -690,7 +605,10 @@ class ReaderRunner(QObject):
             "source_file": Path(source_file),
             "speech_backend": speech_backend,
             "voice_value": voice_value,
-            "elevenlabs_api_key": elevenlabs_api_key,
+            "openai_api_key": openai_api_key,
+            "openai_model": openai_model,
+            "openai_response_format": openai_response_format,
+            "openai_instructions": openai_instructions,
             "start_chunk_index": self._start_chunk_index,
             "track_progress": bool(track_progress),
         }
@@ -805,9 +723,18 @@ class ReaderRunner(QObject):
         voice_value = options.get("voice_value")
         if not isinstance(voice_value, str):
             voice_value = None
-        elevenlabs_api_key = options.get("elevenlabs_api_key")
-        if not isinstance(elevenlabs_api_key, str):
-            elevenlabs_api_key = None
+        openai_api_key = options.get("openai_api_key")
+        if not isinstance(openai_api_key, str):
+            openai_api_key = None
+        openai_model = options.get("openai_model")
+        if not isinstance(openai_model, str):
+            openai_model = OPENAI_TTS_MODEL
+        openai_response_format = options.get("openai_response_format")
+        if not isinstance(openai_response_format, str):
+            openai_response_format = OPENAI_TTS_RESPONSE_FORMAT
+        openai_instructions = options.get("openai_instructions")
+        if not isinstance(openai_instructions, str):
+            openai_instructions = OPENAI_TTS_INSTRUCTIONS
         track_progress = bool(options.get("track_progress", True))
 
         target = max(0.0, self._paused_resume_seconds)
@@ -816,7 +743,10 @@ class ReaderRunner(QObject):
             source_file,
             speech_backend=speech_backend,
             voice_value=voice_value,
-            elevenlabs_api_key=elevenlabs_api_key,
+            openai_api_key=openai_api_key,
+            openai_model=openai_model,
+            openai_response_format=openai_response_format,
+            openai_instructions=openai_instructions,
             start_seconds=0.0,
             start_chunk_index=resume_chunk,
             track_progress=track_progress,
@@ -847,16 +777,28 @@ class ReaderRunner(QObject):
         voice_value = options.get("voice_value")
         if not isinstance(voice_value, str):
             voice_value = None
-        elevenlabs_api_key = options.get("elevenlabs_api_key")
-        if not isinstance(elevenlabs_api_key, str):
-            elevenlabs_api_key = None
+        openai_api_key = options.get("openai_api_key")
+        if not isinstance(openai_api_key, str):
+            openai_api_key = None
+        openai_model = options.get("openai_model")
+        if not isinstance(openai_model, str):
+            openai_model = OPENAI_TTS_MODEL
+        openai_response_format = options.get("openai_response_format")
+        if not isinstance(openai_response_format, str):
+            openai_response_format = OPENAI_TTS_RESPONSE_FORMAT
+        openai_instructions = options.get("openai_instructions")
+        if not isinstance(openai_instructions, str):
+            openai_instructions = OPENAI_TTS_INSTRUCTIONS
         track_progress = bool(options.get("track_progress", True))
 
         started = self.start(
             source_file,
             speech_backend=speech_backend,
             voice_value=voice_value,
-            elevenlabs_api_key=elevenlabs_api_key,
+            openai_api_key=openai_api_key,
+            openai_model=openai_model,
+            openai_response_format=openai_response_format,
+            openai_instructions=openai_instructions,
             start_seconds=target,
             start_chunk_index=0,
             track_progress=track_progress,
@@ -1045,13 +987,16 @@ class ReaderPanel(QWidget):
         self._chapter_populating = False
         self._chapter_jump_pending = False
         self.settings = QSettings("DocReader", "DocReader")
-        saved_key = str(self.settings.value("elevenlabs/api_key", "") or "").strip()
-        env_key = (os.getenv("ELEVENLABS_API_KEY") or "").strip()
-        self.elevenlabs_api_key = saved_key or env_key
-        self.elevenlabs_key_validated = bool(
-            self.settings.value("elevenlabs/api_key_validated", False, type=bool)
+        self.openai_api_key = resolve_openai_api_key()
+        self.openai_model = os.getenv("DOC_READER_OPENAI_MODEL", OPENAI_TTS_MODEL).strip() or OPENAI_TTS_MODEL
+        self.openai_response_format = (
+            os.getenv("DOC_READER_OPENAI_RESPONSE_FORMAT", OPENAI_TTS_RESPONSE_FORMAT).strip()
+            or OPENAI_TTS_RESPONSE_FORMAT
         )
-        self._last_elevenlabs_voice_error: str | None = None
+        self.openai_instructions = os.getenv(
+            "DOC_READER_OPENAI_INSTRUCTIONS",
+            OPENAI_TTS_INSTRUCTIONS,
+        ).strip()
         self._voice_populating = False
 
         self.setWindowTitle("Doc Reader")
@@ -1100,15 +1045,7 @@ class ReaderPanel(QWidget):
         root.addWidget(self.text_input)
 
         api_row = QHBoxLayout()
-        api_row.addWidget(QLabel("ElevenLabs Key"))
-        self.api_key_input = QLineEdit()
-        self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_key_input.setClearButtonEnabled(True)
-        self.api_key_input.setPlaceholderText("Paste API key and press Enter to save")
-        self.api_key_input.returnPressed.connect(self._save_elevenlabs_key)
-        if self.elevenlabs_api_key:
-            self.api_key_input.setText(self.elevenlabs_api_key)
-        api_row.addWidget(self.api_key_input)
+        api_row.addWidget(QLabel("OpenAI Key"))
         self.api_key_status = QLabel("")
         self.api_key_status.setMinimumWidth(140)
         api_row.addWidget(self.api_key_status)
@@ -1158,14 +1095,10 @@ class ReaderPanel(QWidget):
 
         self._populate_voice_options()
         self.refresh_library_list()
-        if self.elevenlabs_api_key and self._last_elevenlabs_voice_error:
-            self._set_api_key_status("error", "Voices unavailable")
-        elif self.elevenlabs_api_key and self.elevenlabs_key_validated:
-            self._set_api_key_status("success", "Saved")
-        elif self.elevenlabs_api_key:
-            self._set_api_key_status("info", "Loaded")
+        if self.openai_api_key:
+            self._set_api_key_status("success", "Available")
         else:
-            self._set_api_key_status("neutral", "Not set")
+            self._set_api_key_status("neutral", "Not found")
 
     def closeEvent(self, event) -> None:  # noqa: N802
         event.ignore()
@@ -1247,8 +1180,10 @@ class ReaderPanel(QWidget):
         else:
             voice_value = None
 
-        if backend == "elevenlabs" and not self.elevenlabs_api_key:
-            self._append_log("Set your ElevenLabs API key in the panel and press Enter.")
+        if backend == "openai" and not self.openai_api_key:
+            self.openai_api_key = resolve_openai_api_key()
+        if backend == "openai" and not self.openai_api_key:
+            self._append_log("[doc-reader] OpenAI API key not found in env, Keychain, or ORP secrets.")
             return
 
         self._set_page_for_source(source_file)
@@ -1257,7 +1192,10 @@ class ReaderPanel(QWidget):
             source_file,
             speech_backend=backend,
             voice_value=voice_value,
-            elevenlabs_api_key=self.elevenlabs_api_key or None,
+            openai_api_key=self.openai_api_key or None,
+            openai_model=self.openai_model,
+            openai_response_format=self.openai_response_format,
+            openai_instructions=self.openai_instructions,
             start_seconds=start_seconds,
             start_chunk_index=start_chunk_index,
             track_progress=track_progress,
@@ -1687,58 +1625,23 @@ class ReaderPanel(QWidget):
         self.api_key_status.setText(text)
         self.api_key_status.setStyleSheet("QLabel { color: #9ca3af; }")
 
-    def _save_elevenlabs_key(self) -> None:
-        candidate = self.api_key_input.text().strip()
-        if not candidate:
-            self.elevenlabs_api_key = ""
-            self.elevenlabs_key_validated = False
-            self.settings.remove("elevenlabs/api_key")
-            self.settings.setValue("elevenlabs/api_key_validated", False)
-            self._set_api_key_status("neutral", "Not set")
-            self._append_log("[doc-reader] ElevenLabs key cleared.")
-            self._populate_voice_options()
-            return
-
-        self._set_api_key_status("info", "Checking...")
-        valid, message = _validate_elevenlabs_api_key(candidate)
-        if not valid:
-            self.elevenlabs_key_validated = False
-            self.settings.setValue("elevenlabs/api_key_validated", False)
-            self._set_api_key_status("error", message)
-            self._append_log(f"[doc-reader] ElevenLabs key check failed: {message}")
-            return
-
-        elevenlabs_voices, load_error = _load_elevenlabs_voices(candidate, MAX_ELEVENLABS_VOICES)
-        self.elevenlabs_api_key = candidate
-        self.settings.setValue("elevenlabs/api_key", candidate)
-        if load_error:
-            self.elevenlabs_key_validated = False
-            self.settings.setValue("elevenlabs/api_key_validated", False)
-            self._set_api_key_status("error", "Connected, but voices unavailable")
-            self._append_log(
-                f"[doc-reader] ElevenLabs key saved, but voices failed to load: {load_error}"
-            )
-        else:
-            self.elevenlabs_key_validated = True
-            self.settings.setValue("elevenlabs/api_key_validated", True)
-            self._set_api_key_status("success", "Saved")
-            self._append_log(
-                f"[doc-reader] ElevenLabs key verified and saved ({len(elevenlabs_voices)} voices)."
-            )
-        self._populate_voice_options(
-            elevenlabs_voices=elevenlabs_voices if not load_error else None,
-            elevenlabs_error=load_error,
-        )
-
-    def _populate_voice_options(
-        self,
-        *,
-        elevenlabs_voices: list[tuple[str, str]] | None = None,
-        elevenlabs_error: str | None = None,
-    ) -> None:
+    def _populate_voice_options(self) -> None:
         self._voice_populating = True
         try:
             self.voice_combo.clear()
+
+            self._add_disabled_item("Local Voices")
+            for label, backend in LOCAL_TTS_OPTIONS:
+                self.voice_combo.addItem(label, {"backend": backend, "value": None})
+
+            self._add_disabled_item("OpenAI Voices")
+            for voice in OPENAI_TTS_VOICE_LABELS:
+                if voice not in OPENAI_TTS_VOICES:
+                    continue
+                self.voice_combo.addItem(
+                    f"OpenAI • {voice}",
+                    {"backend": "openai", "value": voice},
+                )
 
             self._add_disabled_item("Operating System Voices")
             system_voices = _load_system_voices(MAX_SYSTEM_VOICES)
@@ -1746,30 +1649,6 @@ class ReaderPanel(QWidget):
                 value = None if voice == "Default" else voice
                 label = f"System • {voice}"
                 self.voice_combo.addItem(label, {"backend": SYSTEM_BACKEND, "value": value})
-
-            self._add_disabled_item("ElevenLabs Voices")
-            if self.elevenlabs_api_key:
-                load_error = elevenlabs_error
-                if elevenlabs_voices is None and load_error is None:
-                    elevenlabs_voices, load_error = _load_elevenlabs_voices(
-                        self.elevenlabs_api_key,
-                        MAX_ELEVENLABS_VOICES,
-                    )
-                if elevenlabs_voices:
-                    self._last_elevenlabs_voice_error = None
-                    for name, voice_id in elevenlabs_voices:
-                        self.voice_combo.addItem(
-                            f"ElevenLabs • {name}",
-                            {"backend": "elevenlabs", "value": voice_id},
-                        )
-                else:
-                    self._add_disabled_item("No ElevenLabs voices loaded")
-                    if load_error and load_error != self._last_elevenlabs_voice_error:
-                        self._append_log(f"[doc-reader] ElevenLabs voice load failed: {load_error}")
-                    self._last_elevenlabs_voice_error = load_error
-            else:
-                self._last_elevenlabs_voice_error = None
-                self._add_disabled_item("Set ELEVENLABS_API_KEY to load ElevenLabs voices")
 
             self._select_preferred_voice()
         finally:
@@ -1834,8 +1713,8 @@ class ReaderPanel(QWidget):
             if index < 0:
                 index = self._find_first_voice_index(saved_backend)
 
-        if index < 0 and self.elevenlabs_api_key and self._last_elevenlabs_voice_error is None:
-            index = self._find_first_voice_index("elevenlabs")
+        if index < 0:
+            index = self._find_first_voice_index("tailscale-4090")
 
         if index < 0:
             index = self._find_first_voice_index(SYSTEM_BACKEND)

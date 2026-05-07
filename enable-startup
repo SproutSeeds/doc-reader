@@ -11,7 +11,15 @@ RUNNER="$APP_DIR/run-doc-reader"
 VENV_DIR="$APP_DIR/.venv"
 NATIVE_APP="$APP_DIR/Doc Reader.app"
 NATIVE_EXECUTABLE="$NATIVE_APP/Contents/MacOS/DocReader"
+APPLICATIONS_DIR="$HOME/Applications"
+APPLICATIONS_APP="$APPLICATIONS_DIR/Doc Reader.app"
+APPLICATIONS_EXECUTABLE="$APPLICATIONS_APP/Contents/MacOS/DocReader"
 PROGRAM="$RUNNER"
+PREPARE_MANAGED_ONLY=0
+
+if [[ "${1:-}" == "--prepare-managed-only" ]]; then
+  PREPARE_MANAGED_ONLY=1
+fi
 
 if [[ ! -x "$SCRIPT_DIR/run-doc-reader" ]]; then
   echo "[doc-reader] $SCRIPT_DIR/run-doc-reader is missing or not executable." >&2
@@ -35,9 +43,40 @@ chmod +x "$APP_DIR/read-selection-service.sh"
 cp "$SCRIPT_DIR/requirements.txt" "$APP_DIR/requirements.txt"
 rm -rf "$APP_DIR/doc_reader"
 cp -R "$SCRIPT_DIR/doc_reader" "$APP_DIR/doc_reader"
+
+if [[ "$PREPARE_MANAGED_ONLY" == "1" ]]; then
+  DOC_READER_VENV_DIR="$VENV_DIR" "$RUNNER" --prepare-only
+  echo "[doc-reader] Managed runtime ready: $APP_DIR"
+  if [[ -e "$APPLICATIONS_APP" ]]; then
+    echo "[doc-reader] Applications app: $APPLICATIONS_APP"
+  fi
+  exit 0
+fi
+
 "$SCRIPT_DIR/build-macos-app" "$APP_DIR"
-if [[ -x "$NATIVE_EXECUTABLE" ]]; then
+mkdir -p "$APPLICATIONS_DIR"
+if [[ -L "$APPLICATIONS_APP" ]]; then
+  rm "$APPLICATIONS_APP"
+fi
+if [[ -d "$APPLICATIONS_APP" ]]; then
+  EXISTING_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APPLICATIONS_APP/Contents/Info.plist" 2>/dev/null || true)"
+  if [[ "$EXISTING_BUNDLE_ID" != "com.sproutseeds.read-docs" ]]; then
+    echo "[doc-reader] Applications app already exists and is not Doc Reader: $APPLICATIONS_APP" >&2
+    exit 1
+  fi
+  rm -rf "$APPLICATIONS_APP"
+elif [[ -e "$APPLICATIONS_APP" ]]; then
+  echo "[doc-reader] Applications app path already exists and is not an app bundle: $APPLICATIONS_APP" >&2
+  exit 1
+fi
+cp -R "$NATIVE_APP" "$APPLICATIONS_APP"
+if [[ -x "$APPLICATIONS_EXECUTABLE" ]]; then
+  PROGRAM="$APPLICATIONS_EXECUTABLE"
+elif [[ -x "$NATIVE_EXECUTABLE" ]]; then
   PROGRAM="$NATIVE_EXECUTABLE"
+fi
+if [[ -x /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister ]]; then
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APPLICATIONS_APP" >/dev/null 2>&1 || true
 fi
 
 # Ensure env/deps are ready before launchctl starts it.
@@ -80,6 +119,8 @@ cat > "$PLIST_PATH" <<PLIST
     <dict>
       <key>DOC_READER_VENV_DIR</key>
       <string>$VENV_DIR</string>
+      <key>DOC_READER_DISABLE_WEB_FALLBACK</key>
+      <string>1</string>
     </dict>
   </dict>
 </plist>
@@ -108,4 +149,5 @@ echo "[doc-reader] App agent installed and started."
 echo "[doc-reader] LaunchAgent: $PLIST_PATH"
 echo "[doc-reader] Managed install: $APP_DIR"
 echo "[doc-reader] Native app: $NATIVE_APP"
+echo "[doc-reader] Applications app: $APPLICATIONS_APP"
 echo "[doc-reader] It will start at login and can be controlled with read-docs start/stop/status."

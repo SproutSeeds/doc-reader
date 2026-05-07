@@ -6,7 +6,14 @@ from pathlib import Path
 
 from .config import ReaderConfig
 from .pipeline import StreamingReader
-from .speech import ConsoleSpeaker, build_speaker
+from .speech import (
+    ConsoleSpeaker,
+    OPENAI_TTS_INSTRUCTIONS,
+    OPENAI_TTS_MODEL,
+    OPENAI_TTS_RESPONSE_FORMAT,
+    OPENAI_TTS_VOICE,
+    build_speaker,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -38,32 +45,64 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--speech-backend",
-        choices=("auto", "macsay", "pyttsx3", "elevenlabs"),
+        choices=(
+            "auto",
+            "tailscale-4090",
+            "tailscale-chatterbox",
+            "tailscale-kokoro",
+            "local-kokoro",
+            "http-tts",
+            "openai",
+            "macsay",
+            "pyttsx3",
+        ),
         default="auto",
         help=(
-            "Speech backend: auto (default), macsay, pyttsx3, or elevenlabs. "
-            "Auto uses ElevenLabs when ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID are set."
+            "Speech backend: auto (default), tailscale-4090, tailscale-chatterbox, "
+            "tailscale-kokoro, local-kokoro, http-tts, openai, macsay, or pyttsx3."
         ),
     )
     parser.add_argument(
-        "--elevenlabs-api-key",
+        "--http-tts-url",
         default=None,
-        help="Optional ElevenLabs API key (or set ELEVENLABS_API_KEY env var)",
+        help="HTTP TTS base URL for --speech-backend http-tts",
     )
     parser.add_argument(
-        "--elevenlabs-voice-id",
+        "--http-tts-engine",
         default=None,
-        help="Optional ElevenLabs voice id (or set ELEVENLABS_VOICE_ID env var)",
+        help="HTTP TTS engine for --speech-backend http-tts",
     )
     parser.add_argument(
-        "--elevenlabs-model-id",
-        default="eleven_multilingual_v2",
-        help="ElevenLabs model id (default: eleven_multilingual_v2)",
+        "--http-tts-voice",
+        default=None,
+        help="Optional HTTP TTS voice name",
     )
     parser.add_argument(
-        "--elevenlabs-output-format",
-        default="mp3_44100_128",
-        help="ElevenLabs output format (default: mp3_44100_128)",
+        "--openai-api-key",
+        default=None,
+        help="Optional OpenAI API key (or set OPENAI_API_KEY / ORP openai-primary)",
+    )
+    parser.add_argument(
+        "--openai-model",
+        choices=("gpt-4o-mini-tts", "tts-1", "tts-1-hd"),
+        default=OPENAI_TTS_MODEL,
+        help=f"OpenAI speech model (default: {OPENAI_TTS_MODEL})",
+    )
+    parser.add_argument(
+        "--openai-voice",
+        default=OPENAI_TTS_VOICE,
+        help=f"OpenAI voice (default: {OPENAI_TTS_VOICE})",
+    )
+    parser.add_argument(
+        "--openai-response-format",
+        choices=("mp3", "opus", "aac", "flac", "wav"),
+        default=OPENAI_TTS_RESPONSE_FORMAT,
+        help=f"OpenAI audio format for playback (default: {OPENAI_TTS_RESPONSE_FORMAT})",
+    )
+    parser.add_argument(
+        "--openai-instructions",
+        default=OPENAI_TTS_INSTRUCTIONS,
+        help="Optional delivery instructions for gpt-4o-mini-tts",
     )
     parser.add_argument(
         "--first-chunk-words",
@@ -145,10 +184,14 @@ def main() -> int:
                 rate=config.speech_rate,
                 voice_hint=config.voice_hint,
                 backend=args.speech_backend,
-                elevenlabs_api_key=args.elevenlabs_api_key,
-                elevenlabs_voice_id=args.elevenlabs_voice_id,
-                elevenlabs_model_id=args.elevenlabs_model_id,
-                elevenlabs_output_format=args.elevenlabs_output_format,
+                openai_api_key=args.openai_api_key,
+                openai_model=args.openai_model,
+                openai_voice=args.openai_voice,
+                openai_response_format=args.openai_response_format,
+                openai_instructions=args.openai_instructions,
+                http_tts_url=args.http_tts_url,
+                http_tts_engine=args.http_tts_engine,
+                http_tts_voice=args.http_tts_voice,
             )
         except RuntimeError as exc:
             print(f"[doc-reader] {exc}")
