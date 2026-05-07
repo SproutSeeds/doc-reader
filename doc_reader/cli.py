@@ -138,7 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--start-seconds",
         type=float,
         default=0.0,
-        help="Approximate playback start offset in seconds (used for rewind resume)",
+        help="Approximate playback offset inside the start chunk in seconds",
     )
     parser.add_argument(
         "--dry-run",

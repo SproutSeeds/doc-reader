@@ -30,6 +30,13 @@ starts successfully.
 `0.2.2` fixes the macOS menu-bar `Resume Web Reading` control so it resumes the
 paused web reading card instead of sending another pause request.
 
+## 0.2.3
+
+`0.2.3` makes pause/resume resume inside the current reading chunk instead of
+starting that chunk from the beginning. The web reader now persists the current
+chunk start position and trims the resumed narration to the approximate paused
+word position.
+
 Before publishing:
 
 ```bash

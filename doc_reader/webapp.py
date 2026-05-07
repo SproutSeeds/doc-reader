@@ -63,6 +63,7 @@ class HistoryItem:
     created_at: float
     updated_at: float
     last_seconds: float = 0.0
+    last_chunk_start_seconds: float = 0.0
     resume_chunk_index: int = 0
     completed: bool = False
 
@@ -91,6 +92,8 @@ class ReaderService:
         self._resume_chunk_index = 0
         self._start_time: float | None = None
         self._start_offset_seconds = 0.0
+        self._active_chunk_start_seconds = 0.0
+        self._resume_start_chunk_offset_seconds = 0.0
         self._last_position_seconds = 0.0
         self._status = "Ready."
         self._last_reader_error: str | None = None
@@ -191,14 +194,19 @@ class ReaderService:
 
             if item.completed:
                 item.last_seconds = 0.0
+                item.last_chunk_start_seconds = 0.0
                 item.resume_chunk_index = 0
                 item.completed = False
                 self._upsert_item(item)
 
             resume_chunk = max(0, int(item.resume_chunk_index))
             saved_seconds = max(0.0, float(item.last_seconds))
-            start_seconds = 0.0 if resume_chunk > 0 else max(0.0, saved_seconds - 20.0)
-            display_seconds = saved_seconds if resume_chunk > 0 else start_seconds
+            chunk_start_seconds = min(
+                saved_seconds,
+                max(0.0, float(item.last_chunk_start_seconds)),
+            )
+            start_seconds = max(0.0, saved_seconds - chunk_start_seconds)
+            display_seconds = saved_seconds
 
             backend = self._speech_backend()
             args = [
@@ -256,9 +264,12 @@ class ReaderService:
             self._last_reader_error = None
             self._start_time = time.monotonic()
             self._start_offset_seconds = display_seconds
+            self._active_chunk_start_seconds = chunk_start_seconds
+            self._resume_start_chunk_offset_seconds = start_seconds
             self._last_position_seconds = display_seconds
             self._status = f"Reading {item.title}"
             item.last_seconds = display_seconds
+            item.last_chunk_start_seconds = chunk_start_seconds
             item.resume_chunk_index = resume_chunk
             item.completed = False
             self._upsert_item(item)
@@ -542,6 +553,16 @@ class ReaderService:
                 index = int(match.group(1))
                 self._active_chunk_index = index
                 self._resume_chunk_index = max(0, index)
+                offset = (
+                    self._resume_start_chunk_offset_seconds
+                    if index == self._resume_chunk_index
+                    else 0.0
+                )
+                self._active_chunk_start_seconds = max(
+                    0.0,
+                    self._current_position_seconds_locked() - offset,
+                )
+                self._resume_start_chunk_offset_seconds = 0.0
                 return
 
             match = CHUNK_DONE_RE.match(line)
@@ -551,6 +572,7 @@ class ReaderService:
                 if self._active_chunk_index == index:
                     self._active_chunk_index = None
                 self._resume_chunk_index = max(self._resume_chunk_index, index + 1)
+                self._active_chunk_start_seconds = self._current_position_seconds_locked()
                 self._save_active_progress_locked()
                 return
 
@@ -573,7 +595,12 @@ class ReaderService:
             target = self._find_item(self._active_id or self._paused_id)
         if target is None:
             return
-        target.last_seconds = self._current_position_seconds_locked()
+        current_position = self._current_position_seconds_locked()
+        target.last_seconds = current_position
+        target.last_chunk_start_seconds = min(
+            current_position,
+            max(0.0, self._active_chunk_start_seconds),
+        )
         target.resume_chunk_index = max(
             0,
             self._active_chunk_index
