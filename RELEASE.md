@@ -37,6 +37,14 @@ starting that chunk from the beginning. The web reader now persists the current
 chunk start position and trims the resumed narration to the approximate paused
 word position.
 
+## 0.3.0
+
+`0.3.0` presents Doc Reader as the local GPU speech workspace it has become. It
+updates the README animation and package metadata around strict 4090 Kokoro TTS,
+4090 Whisper dictation, unified Library cards, local Signal Map analysis, and the
+native recording HUD cancel control. OpenAI remains available as an explicit
+optional backend instead of the primary operating path.
+
 Before publishing:
 
 ```bash
@@ -64,7 +72,7 @@ Manual checks:
 - `read-docs tts-mac-start` provisions the Mac-local Kokoro sidecar and reports the local health endpoint.
 - `read-docs tts-bench` writes Chatterbox/Kokoro/macOS speech samples and a benchmark JSON report.
 - `Read Clipboard in DocReader`, pause, and stop call the web app instead of a separate native reader.
-- History cards persist across app restarts, and playing one card pauses any active card first.
+- Library cards persist across app restarts, and playing one card pauses any active card first.
 - Pause and Resume restore the saved chunk for a document or text card.
 - Default app playback uses strict private 4090 Kokoro with no API fallback.
 - Local fallback mode prefers private 4090 Kokoro, then Mac Kokoro, then 4090 Chatterbox, then macOS system speech.

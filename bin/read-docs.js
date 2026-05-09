@@ -71,10 +71,10 @@ macOS app bootstrapper:
   read-docs web-stop         Stop the local web app agent
   read-docs web-status       Show local web app health
   read-docs tailscale        Start web app and expose it on the tailnet at :${webPort}
-  read-docs tts-umbra-install Install/update the 4090 Chatterbox/Kokoro service
-  read-docs tts-umbra-start   Start the 4090 TTS service on Umbra
-  read-docs tts-umbra-stop    Stop the 4090 TTS service on Umbra
-  read-docs tts-umbra-status  Show the 4090 TTS service health
+  read-docs tts-umbra-install Install/update the 4090 Kokoro/Whisper service
+  read-docs tts-umbra-start   Start the 4090 speech service on Umbra
+  read-docs tts-umbra-stop    Stop the 4090 speech service on Umbra
+  read-docs tts-umbra-status  Show the 4090 speech service health
   read-docs tts-mac-start     Install/start local Mac Kokoro service
   read-docs tts-mac-stop      Stop local Mac Kokoro service
   read-docs tts-mac-status    Show local Mac Kokoro service health
@@ -83,7 +83,7 @@ macOS app bootstrapper:
   read-docs tts-samples       Generate benchmark sample audio files
 
 Document CLI:
-  read-docs <file> [options] Stream a document through the local reader engine
+  read-docs <file> [options] Stream a document through the local GPU-first reader
   read-docs cli <file> [...] Same as above, explicit CLI form
 
 The polished app integration is macOS-first. On other platforms, use the document CLI.`);

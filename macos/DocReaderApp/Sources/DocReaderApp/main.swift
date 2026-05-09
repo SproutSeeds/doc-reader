@@ -267,7 +267,6 @@ private struct ReaderHistoryItem: Codable, Equatable {
 private final class ReaderHistoryStore {
     private let defaults = UserDefaults.standard
     private let key = "reader.history.cards.v1"
-    private let maxItems = 80
     private let managedRoot: URL
 
     var onChange: (() -> Void)?
@@ -384,8 +383,7 @@ private final class ReaderHistoryStore {
     private func save(_ items: [ReaderHistoryItem]) {
         let sorted = items
             .sorted { lhs, rhs in lhs.updatedAt > rhs.updatedAt }
-            .prefix(maxItems)
-        if let data = try? JSONEncoder().encode(Array(sorted)) {
+        if let data = try? JSONEncoder().encode(sorted) {
             defaults.set(data, forKey: key)
             defaults.synchronize()
             DispatchQueue.main.async { [weak self] in
@@ -1518,6 +1516,16 @@ private final class DictationAudioRecorder: NSObject {
     }
 }
 
+private final class RecordingOverlayPanel: NSPanel {
+    override var canBecomeKey: Bool {
+        true
+    }
+
+    override var canBecomeMain: Bool {
+        false
+    }
+}
+
 private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let managedRoot = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".doc-reader-managed", isDirectory: true)
@@ -1553,6 +1561,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dictationTargetApp: NSRunningApplication?
     private var recordingWindow: NSWindow?
     private var recordingLabel: NSTextField?
+    private var recordingCancelButton: NSButton?
     private var recordingLevelFill: NSView?
     private var recordingLevelWidthConstraint: NSLayoutConstraint?
     private var dictationAudioLevel = 0.0
@@ -1739,6 +1748,22 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         stopDictationRecording(send: false)
         fallbackWebProcess?.terminate()
+    }
+
+    @objc private func cancelDictationRecording() {
+        pendingDictationStart?.cancel()
+        pendingDictationStart = nil
+        pendingDictationStop?.cancel()
+        pendingDictationStop = nil
+        optionKeyWasDown = false
+        dictationGestureActive = false
+        dictationLatchedByRapidRelease = false
+        lastDictationGestureAt = Date()
+        hideRecordingOverlay()
+        statusMenuItem.title = "Dictation canceled."
+        logDictation("recording canceled from overlay")
+        stopDictationRecording(send: false)
+        publishNativeDictationStatus(activeMicrophoneID: selectedMicrophoneDevice()?.uniqueID ?? "")
     }
 
     private func installDictationHotkeyMonitor() {
@@ -2501,72 +2526,85 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showRecordingOverlay(text: String) {
         let rect = recordingOverlayFrame()
         if recordingWindow == nil {
-            let window = NSWindow(
+            let window = RecordingOverlayPanel(
                 contentRect: rect,
-                styleMask: [.borderless],
+                styleMask: [.borderless, .nonactivatingPanel],
                 backing: .buffered,
                 defer: false
             )
             window.level = .floating
             window.isOpaque = false
             window.backgroundColor = NSColor.clear
-            window.ignoresMouseEvents = true
+            window.ignoresMouseEvents = false
+            window.hidesOnDeactivate = false
+            window.collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
 
             let container = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: rect.width, height: rect.height))
             container.material = .hudWindow
             container.blendingMode = .behindWindow
             container.state = .active
             container.wantsLayer = true
-            container.layer?.cornerRadius = 12
+            container.layer?.cornerRadius = 10
 
             let topRow = NSStackView()
             topRow.orientation = .horizontal
-            topRow.spacing = 10
+            topRow.spacing = 7
             topRow.alignment = .centerY
             topRow.translatesAutoresizingMaskIntoConstraints = false
 
             let dot = NSTextField(labelWithString: "●")
             dot.textColor = .systemRed
-            dot.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
+            dot.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
             dot.translatesAutoresizingMaskIntoConstraints = false
 
             let label = NSTextField(labelWithString: text)
             label.textColor = .labelColor
-            label.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+            label.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
             label.lineBreakMode = .byTruncatingTail
             label.maximumNumberOfLines = 1
             label.usesSingleLineMode = true
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             label.translatesAutoresizingMaskIntoConstraints = false
 
+            let cancelButton = NSButton(title: "x", target: self, action: #selector(cancelDictationRecording))
+            cancelButton.bezelStyle = .circular
+            cancelButton.controlSize = .small
+            cancelButton.font = NSFont.systemFont(ofSize: 11, weight: .bold)
+            cancelButton.toolTip = "Cancel dictation"
+            cancelButton.translatesAutoresizingMaskIntoConstraints = false
+
             let levelTrack = NSView()
             levelTrack.wantsLayer = true
             levelTrack.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.45).cgColor
-            levelTrack.layer?.cornerRadius = 4
+            levelTrack.layer?.cornerRadius = 2.5
             levelTrack.translatesAutoresizingMaskIntoConstraints = false
 
             let levelFill = NSView()
             levelFill.wantsLayer = true
             levelFill.layer?.backgroundColor = NSColor.systemGreen.cgColor
-            levelFill.layer?.cornerRadius = 4
+            levelFill.layer?.cornerRadius = 2.5
             levelFill.translatesAutoresizingMaskIntoConstraints = false
 
             levelTrack.addSubview(levelFill)
             topRow.addArrangedSubview(dot)
             topRow.addArrangedSubview(label)
+            topRow.addArrangedSubview(cancelButton)
             container.addSubview(topRow)
             container.addSubview(levelTrack)
 
             let fillWidth = levelFill.widthAnchor.constraint(equalToConstant: 2)
             NSLayoutConstraint.activate([
-                topRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
-                topRow.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -18),
-                topRow.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
+                topRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+                topRow.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+                topRow.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
 
-                levelTrack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
-                levelTrack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -18),
-                levelTrack.topAnchor.constraint(equalTo: topRow.bottomAnchor, constant: 8),
-                levelTrack.heightAnchor.constraint(equalToConstant: 8),
+                levelTrack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+                levelTrack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+                levelTrack.topAnchor.constraint(equalTo: topRow.bottomAnchor, constant: 6),
+                levelTrack.heightAnchor.constraint(equalToConstant: 5),
+
+                cancelButton.widthAnchor.constraint(equalToConstant: 22),
+                cancelButton.heightAnchor.constraint(equalToConstant: 22),
 
                 levelFill.leadingAnchor.constraint(equalTo: levelTrack.leadingAnchor),
                 levelFill.topAnchor.constraint(equalTo: levelTrack.topAnchor),
@@ -2576,11 +2614,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             window.contentView = container
             recordingWindow = window
             recordingLabel = label
+            recordingCancelButton = cancelButton
             recordingLevelFill = levelFill
             recordingLevelWidthConstraint = fillWidth
         }
         recordingWindow?.setFrame(rect, display: true)
         recordingLabel?.stringValue = text
+        recordingCancelButton?.isHidden = audioRecorder == nil && !recordingStartPending
         updateRecordingLevelMeter(dictationAudioLevel)
         recordingWindow?.orderFrontRegardless()
     }
@@ -2592,17 +2632,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             NSMouseInRect(mouseLocation, screen.frame, false)
         } ?? NSScreen.main ?? NSScreen.screens.first
         let screenFrame = screen?.visibleFrame ?? fallbackFrame
-        let margin: CGFloat = 14
-        let width = min(max(300, screenFrame.width * 0.42), max(220, screenFrame.width - (margin * 2)))
-        let height: CGFloat = 72
-        let x = min(
-            max(screenFrame.minX + margin, screenFrame.maxX - width - margin),
-            screenFrame.maxX - width
-        )
-        let y = min(
-            max(screenFrame.minY + margin, screenFrame.maxY - height - margin),
-            screenFrame.maxY - height
-        )
+        let margin: CGFloat = 18
+        let availableWidth = max(220, screenFrame.width - (margin * 2))
+        let width = min(max(260, screenFrame.width * 0.22), min(360, availableWidth))
+        let height: CGFloat = 46
+        let x = max(screenFrame.minX + margin, screenFrame.maxX - width - margin)
+        let y = screenFrame.minY + margin
         return NSRect(x: x, y: y, width: width, height: height)
     }
 
@@ -2612,7 +2647,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let clamped = min(1.0, max(0.0, level))
-        let width = max(2, (window.frame.width - 36) * clamped)
+        let width = max(2, (window.frame.width - 24) * clamped)
         constraint.constant = width
         let hue = 0.32 - (0.22 * clamped)
         recordingLevelFill?.layer?.backgroundColor = NSColor(

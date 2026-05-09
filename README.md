@@ -1,24 +1,33 @@
 # read-docs
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/SproutSeeds/doc-reader/main/docs/readme-animation.svg" alt="Animated read-docs terminal workflow showing selected text and the Read with Doc Reader service" width="760">
+  <img src="https://raw.githubusercontent.com/SproutSeeds/doc-reader/main/docs/readme-animation.svg" alt="Animated Doc Reader workflow showing local GPU speech, dictation, the Library, and the Signal Map" width="760">
 </p>
 
 Maintained by SproutSeeds. Research stewardship: Fractal Research Group ([frg.earth](https://frg.earth)).
 
-A macOS-first, local-first streaming document reader for `.pdf`, `.docx`, `.txt`,
-and `.md` files.
+A macOS-first, local-GPU speech workspace for reading documents, capturing
+dictation, and keeping the resulting material organized in one local Library.
 
-It is designed to start speaking quickly from the first chunk, then keep playback continuous by preparing later chunks in the background.
+It streams `.pdf`, `.docx`, `.txt`, and `.md` files through local neural TTS,
+captures Option-key dictation through local Whisper, and keeps playback
+continuous by preparing later chunks in the background.
 
 ## Why this exists
 
-- Does not ship a shared OpenAI key; OpenAI speech is explicit and uses your local environment, macOS Keychain, or ORP secrets.
-- Can use private local neural speech through a Tailscale-connected 4090 or a Mac-local Kokoro sidecar, with local `say` fallback on macOS.
-- Can use the Tailscale-connected 4090 for opt-in speech-to-text dictation with no API key.
+- Uses free local GPU processing as the primary speech path: strict 4090 Kokoro
+  for text-to-speech and 4090 Whisper for speech-to-text.
+- Keeps OpenAI speech as an explicit optional backend that loads only from your
+  environment, macOS Keychain, or ORP secrets when you select it.
+- Supports private neural speech through a Tailscale-connected 4090 or a
+  Mac-local Kokoro sidecar, with local `say` fallback on macOS.
+- Turns reading, dictation, and external app handoffs into durable Library cards.
+- Tracks a local Signal Map for STT/TTS word counts, reading completion, and
+  batch analysis.
 - Reads with understanding in `smart` mode instead of spelling every character.
 - Prefetches chunks so playback remains continuous.
-- Supports persistent reading history, pause/resume, and selectable speech backends.
+- Supports pause/resume, active-field dictation insertion, and selectable speech
+  backends.
 
 ## Platform support
 
@@ -78,7 +87,7 @@ read-docs web-status
 
 By default, the local service listens on `http://127.0.0.1:8766`. Tailscale
 Serve can expose the same page at `https://<this-machine>:8766` inside the
-tailnet. The web app supports document upload, text reading, History cards,
+tailnet. The web app supports document upload, text reading, Library cards,
 play, pause, resume, stop, and voice settings.
 
 Local-only controls:
@@ -91,15 +100,15 @@ read-docs web
 
 ## Local neural text-to-speech
 
-Doc Reader can run private neural speech sidecars and use them before paid API
-speech. The strict 4090 backend is the default for app playback and uses only
-the Umbra Tailnet TTS service:
+Doc Reader runs private neural speech sidecars as the normal app speech path.
+The strict 4090 backend is the default for app playback and uses the Umbra
+Tailnet TTS service:
 
 ```text
 Strict 4090 (Kokoro)
 ```
 
-The optional local fallback backend stays local and never calls OpenAI:
+The optional local fallback backend stays on your Mac and tailnet:
 
 ```text
 4090 Kokoro -> Mac Kokoro -> 4090 Chatterbox -> macOS say
@@ -153,9 +162,29 @@ while the key is held, sends the audio to Umbra when the key is released,
 inserts the transcription at the cursor, and adds the transcription as a
 `Dictation` card in the web app.
 
-The web app keeps read-aloud cards and dictation cards in separate lists.
-Dictation cards have a copy icon button; clicking it copies the full text and
-briefly switches the button to a green checkmark.
+The web app keeps read-aloud cards, dictation cards, and external app readings
+in one Library. Filter buttons narrow the Library to Readings, Dictations, or
+Clawdad-origin items. Dictation cards have a copy icon button; clicking it
+copies the full text and briefly switches the button to a green checkmark.
+Library retention is unbounded: read-aloud cards, prepared TTS audio metadata,
+STT dictation cards, and saved dictation recording files are retained until you
+remove them from the managed app data.
+
+The Library also tracks a local Signal Map. It counts words separately for STT
+dictations and TTS/read-aloud material, records completion state for readings,
+and writes batch semantic analysis to
+`~/.doc-reader-managed/library-analysis.json` plus per-batch JSON files under
+`~/.doc-reader-managed/library-analysis-batches/`. The analyzer runs
+periodically while the web app is open and can be triggered from the Signal Map
+button. By default it tries a free local 4090 model endpoint through Ollama at
+the Umbra host on port `11434`, then falls back to deterministic local
+structure if no model is reachable. Configure it with:
+
+```bash
+export DOC_READER_ANALYSIS_BACKEND=ollama
+export DOC_READER_ANALYSIS_URL=http://100.72.151.28:11434
+export DOC_READER_ANALYSIS_MODEL=llama3.1:8b
+```
 
 The first transcription can take longer while `large-v3` loads on the 4090.
 After warmup, short dictations should return quickly. macOS may ask for
@@ -223,20 +252,15 @@ Optional fallback TTS engine:
 ./.venv/bin/python -m pip install pyttsx3
 ```
 
-## OpenAI text-to-speech
+## Optional remote text-to-speech
 
-OpenAI remains available as an explicit speech backend. The app checks
-`OPENAI_API_KEY`, Doc Reader's macOS Keychain item, and ORP's local
-`openai-primary` Keychain secret when `--speech-backend openai` is selected.
+The default app path uses local GPU speech. OpenAI remains available as an
+explicit remote speech backend for users who choose it. When
+`--speech-backend openai` is selected, the app checks `OPENAI_API_KEY`,
+Doc Reader's macOS Keychain item, and ORP's local `openai-primary` Keychain
+secret.
 
-CLI with environment variables:
-
-```bash
-export OPENAI_API_KEY="your_api_key_here"
-./run-doc-reader --speech-backend openai
-```
-
-CLI with explicit flags:
+CLI with explicit backend selection:
 
 ```bash
 ./run-doc-reader \
@@ -250,9 +274,12 @@ App usage:
 
 - Open the panel from the menu bar icon.
 - Choose a document, read clipboard text, or paste text into the reader window.
-- Use the History cards to pause, resume, and switch between saved readings.
-- Choose Strict 4090, 4090 Chatterbox, 4090 Kokoro, Mac Kokoro, OpenAI API, or system speech.
-- Store an OpenAI key in the macOS Keychain or ORP secrets for remote voices.
+- Use the Library cards to pause, resume, copy dictation text, and switch
+  between saved readings.
+- Choose Strict 4090, 4090 Chatterbox, 4090 Kokoro, Mac Kokoro, OpenAI API, or
+  system speech.
+- Store an OpenAI key in the macOS Keychain or ORP secrets only when using the
+  optional remote backend.
 - Click `Stop Reading` from the menu bar item to stop active playback.
 
 ## macOS menu-bar app
@@ -275,11 +302,13 @@ What it gives you:
 - Applications/Dock launcher at `~/Applications/Doc Reader.app`.
 - Tailnet web app through `read-docs tailscale`.
 - `Open DocReader Page` opens `http://127.0.0.1:8766`.
-- `Read Clipboard in DocReader` posts clipboard text into the web History cards.
+- `Read Clipboard in DocReader` posts clipboard text into the web Library.
 - Pause/resume and stop controls call the web app.
-- Persistent History cards for documents, pasted text, clipboard text, and highlighted text.
+- Persistent Library cards for documents, pasted text, clipboard text,
+  highlighted text, dictation, and external app handoffs.
 - Optional Option/Alt hold-to-record dictation with microphone selection, 4090 Whisper, active-field insertion, and copyable Dictation cards.
-- Web settings for strict 4090, Mac-local, OpenAI API, and system speech.
+- Signal Map metrics and batch analysis for local reading and dictation material.
+- Web settings for strict 4090, Mac-local, optional OpenAI API, and system speech.
 - OpenAI API keys are loaded only when OpenAI API is explicitly selected.
 - Right-click Services integration sends highlighted text into the web app.
 

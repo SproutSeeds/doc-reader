@@ -1,7 +1,7 @@
 {
   "name": "read-docs",
-  "version": "0.2.3",
-  "description": "macOS-first bootstrapper for a local streaming document reader.",
+  "version": "0.3.0",
+  "description": "macOS local GPU speech workspace for document reading, dictation, and library analysis.",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -31,7 +31,13 @@
     "pdf",
     "docx",
     "text-to-speech",
+    "speech-to-text",
+    "dictation",
+    "local-gpu",
+    "kokoro",
+    "whisper",
     "tts",
+    "stt",
     "macos",
     "menubar",
     "launchagent",
