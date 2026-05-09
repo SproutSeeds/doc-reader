@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" role="img" aria-labelledby="title desc">
   <title id="title">Doc Reader local GPU speech workflow</title>
-  <desc id="desc">Doc Reader reads documents with local 4090 Kokoro, captures Option-key dictation with local 4090 Whisper, and saves everything into a Library with Signal Map analysis.</desc>
+  <desc id="desc">Doc Reader reads highlighted text when Right Command is pressed, turns on the microphone for local Whisper STT when ALT is held for about 1.5 seconds, and saves everything into a Library with Signal Map analysis.</desc>
   <style>
     svg {
       background: #f7f8f6;
@@ -27,13 +27,14 @@
     .dot-yellow { fill: #ffbd2e; }
     .dot-green { fill: #28c840; }
     .title-text { fill: #d8ded9; font-size: 13px; font-weight: 700; letter-spacing: 0; }
-    .h1 { fill: #151716; font-size: 25px; font-weight: 800; letter-spacing: 0; }
+    .h1 { fill: #151716; font-size: 24px; font-weight: 800; letter-spacing: 0; }
     .h2 { fill: #151716; font-size: 16px; font-weight: 800; letter-spacing: 0; }
     .h2-light { fill: #f4f7f4; font-size: 16px; font-weight: 800; letter-spacing: 0; }
-    .body { fill: #4d5851; font-size: 13px; font-weight: 600; letter-spacing: 0; }
-    .body-light { fill: #d6ded8; font-size: 13px; font-weight: 600; letter-spacing: 0; }
-    .small { fill: #66736b; font-size: 11px; font-weight: 700; letter-spacing: 0; }
-    .small-light { fill: #aeb9b2; font-size: 11px; font-weight: 700; letter-spacing: 0; }
+    .body { fill: #4d5851; font-size: 12px; font-weight: 650; letter-spacing: 0; }
+    .body-light { fill: #d6ded8; font-size: 12px; font-weight: 650; letter-spacing: 0; }
+    .small { fill: #66736b; font-size: 10.5px; font-weight: 700; letter-spacing: 0; }
+    .small-light { fill: #aeb9b2; font-size: 10.5px; font-weight: 700; letter-spacing: 0; }
+    .footer { fill: #66736b; font-size: 9.5px; font-weight: 650; letter-spacing: 0; }
     .mono { font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; letter-spacing: 0; }
     .green { fill: #1b8f5a; }
     .blue { fill: #2270c5; }
@@ -61,7 +62,7 @@
     .arrow {
       fill: none;
       stroke: #2b8060;
-      stroke-width: 4;
+      stroke-width: 4.4;
       stroke-linecap: round;
       stroke-dasharray: 12 10;
       animation: arrow-flow 7s linear infinite;
@@ -74,14 +75,10 @@
 
     .reading-card {
       animation: reading-pulse 10s ease-in-out infinite;
-      transform-box: fill-box;
-      transform-origin: center;
     }
 
     .dictation-card {
       animation: dictation-pulse 10s ease-in-out infinite;
-      transform-box: fill-box;
-      transform-origin: center;
     }
 
     .gpu-light {
@@ -120,13 +117,13 @@
     }
 
     @keyframes reading-pulse {
-      0%, 9%, 42%, 100% { filter: none; transform: scale(1); }
-      13%, 35% { filter: drop-shadow(0 0 12px rgb(36 179 107 / .45)); transform: scale(1.01); }
+      0%, 9%, 42%, 100% { opacity: .9; }
+      13%, 35% { opacity: 1; }
     }
 
     @keyframes dictation-pulse {
-      0%, 43%, 84%, 100% { filter: none; transform: scale(1); }
-      50%, 73% { filter: drop-shadow(0 0 12px rgb(46 117 189 / .45)); transform: scale(1.01); }
+      0%, 43%, 84%, 100% { opacity: .9; }
+      50%, 73% { opacity: 1; }
     }
 
     @keyframes gpu-light {
@@ -172,11 +169,11 @@
   </style>
 
   <defs>
-    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L0,6 L9,3 z" fill="#2b8060"/>
+    <marker id="arrowhead" markerWidth="14" markerHeight="14" refX="12" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L0,10 L14,5 z" fill="#2b8060"/>
     </marker>
-    <marker id="arrowhead-blue" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L0,6 L9,3 z" fill="#2e75bd"/>
+    <marker id="arrowhead-blue" markerWidth="14" markerHeight="14" refX="12" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L0,10 L14,5 z" fill="#2e75bd"/>
     </marker>
   </defs>
 
@@ -187,75 +184,79 @@
   <circle class="dot-green" cx="103" cy="55" r="6"/>
   <text class="title-text" x="480" y="60" text-anchor="middle">Doc Reader - local GPU speech workspace</text>
 
-  <text class="h1" x="58" y="118">Read, dictate, analyze locally</text>
-  <text class="body" x="58" y="144">Strict 4090 Kokoro TTS + 4090 Whisper STT feed one durable Library.</text>
+  <text class="h1" x="58" y="116">Read, dictate, analyze locally</text>
+  <text class="body" x="58" y="141">Right Command reads highlighted text. Hold ALT ~1.5s to turn on the mic.</text>
 
-  <rect class="panel" x="58" y="171" width="250" height="142" rx="12"/>
-  <text class="h2" x="78" y="202">Mac capture</text>
-  <rect class="chip" x="78" y="218" width="82" height="26" rx="13"/>
-  <text class="small green" x="119" y="236" text-anchor="middle">Right Cmd</text>
-  <rect class="chip" x="170" y="218" width="94" height="26" rx="13"/>
-  <text class="small blue" x="217" y="236" text-anchor="middle">Option hold</text>
-  <text class="body" x="78" y="267">Selected text and microphone audio</text>
-  <text class="body" x="78" y="288">stay inside the local app flow.</text>
+  <rect class="panel" x="58" y="166" width="284" height="150" rx="12"/>
+  <text class="h2" x="78" y="196">Mac shortcuts</text>
 
-  <g class="recording-hud">
-    <rect class="panel-dark" x="72" y="327" width="242" height="50" rx="12"/>
-    <circle class="dot-red" cx="93" cy="346" r="5"/>
-    <text class="small-light" x="107" y="350">DocReader recording...</text>
-    <circle cx="290" cy="346" r="11" fill="#2c3430" stroke="#59645d"/>
-    <text class="small-light" x="290" y="350" text-anchor="middle">x</text>
-    <rect x="92" y="361" width="190" height="5" rx="2.5" fill="#5b655f"/>
-    <rect class="meter-fill" x="92" y="361" width="190" height="5" rx="2.5"/>
-  </g>
+  <rect class="card" x="78" y="210" width="244" height="42" rx="8"/>
+  <circle class="green" cx="96" cy="231" r="6"/>
+  <text class="body" x="112" y="228">Highlight text + Right Cmd</text>
+  <text class="small" x="112" y="244">Kokoro reads it back with TTS</text>
 
-  <path class="arrow" d="M322 240 C360 214 383 214 421 240" marker-end="url(#arrowhead)"/>
-  <path class="arrow arrow-blue" d="M421 274 C384 305 354 306 318 276" marker-end="url(#arrowhead-blue)"/>
+  <rect class="card" x="78" y="262" width="244" height="42" rx="8"/>
+  <circle class="blue" cx="96" cy="283" r="6"/>
+  <text class="body" x="112" y="280">Hold ALT for ~1.5 seconds</text>
+  <text class="small" x="112" y="296">Whisper mic turns on for STT</text>
 
-  <rect class="panel" x="420" y="149" width="256" height="206" rx="14"/>
-  <text class="h2" x="444" y="181">Library</text>
-  <rect class="chip" x="578" y="163" width="72" height="26" rx="13"/>
-  <text class="small green" x="614" y="181" text-anchor="middle">Signal Map</text>
+  <path class="arrow" d="M356 232 C370 222 383 224 392 236" marker-end="url(#arrowhead)"/>
+  <path class="arrow arrow-blue" d="M392 274 C377 286 368 286 356 280" marker-end="url(#arrowhead-blue)"/>
+
+  <rect class="panel" x="400" y="146" width="292" height="202" rx="14"/>
+  <text class="h2" x="424" y="178">Library</text>
+  <rect class="chip" x="588" y="160" width="78" height="26" rx="13"/>
+  <text class="small green" x="627" y="178" text-anchor="middle">Signal Map</text>
 
   <g class="reading-card">
-    <rect class="card" x="444" y="200" width="208" height="42" rx="8"/>
-    <circle class="green" cx="462" cy="221" r="7"/>
-    <text class="body" x="478" y="218">Reading card</text>
-    <text class="small" x="478" y="234">Kokoro playback prepared</text>
+    <rect class="card" x="424" y="196" width="242" height="42" rx="8"/>
+    <circle class="green" cx="442" cy="217" r="7"/>
+    <text class="body" x="458" y="214">TTS readback card</text>
+    <text class="small" x="458" y="230">Highlighted text queued for Kokoro</text>
   </g>
 
   <g class="dictation-card">
-    <rect class="card" x="444" y="252" width="208" height="42" rx="8"/>
-    <circle class="blue" cx="462" cy="273" r="7"/>
-    <text class="body" x="478" y="270">Dictation card</text>
-    <text class="small" x="478" y="286">Whisper text copied or inserted</text>
+    <rect class="card" x="424" y="248" width="242" height="42" rx="8"/>
+    <circle class="blue" cx="442" cy="269" r="7"/>
+    <text class="body" x="458" y="266">STT dictation card</text>
+    <text class="small" x="458" y="282">ALT-held mic copied or inserted</text>
   </g>
 
-  <rect class="card" x="444" y="304" width="208" height="32" rx="8"/>
-  <rect class="signal-bar-a green" x="462" y="315" width="8" height="15" rx="3"/>
-  <rect class="signal-bar-b blue" x="478" y="309" width="8" height="21" rx="3"/>
-  <rect class="signal-bar-c amber" x="494" y="318" width="8" height="12" rx="3"/>
-  <text class="small" x="518" y="324">STT / TTS / open</text>
+  <rect class="card" x="424" y="300" width="242" height="32" rx="8"/>
+  <rect class="signal-bar-a green" x="442" y="311" width="8" height="15" rx="3"/>
+  <rect class="signal-bar-b blue" x="458" y="305" width="8" height="21" rx="3"/>
+  <rect class="signal-bar-c amber" x="474" y="314" width="8" height="12" rx="3"/>
+  <text class="small" x="498" y="320">STT / TTS / open</text>
 
-  <path class="arrow" d="M686 222 C716 190 738 186 768 206" marker-end="url(#arrowhead)"/>
-  <path class="arrow arrow-blue" d="M768 282 C738 308 716 303 686 270" marker-end="url(#arrowhead-blue)"/>
+  <path class="arrow" d="M708 222 C720 209 732 209 742 220" marker-end="url(#arrowhead)"/>
+  <path class="arrow arrow-blue" d="M742 276 C731 289 719 289 708 272" marker-end="url(#arrowhead-blue)"/>
 
-  <rect class="panel-dark" x="724" y="139" width="184" height="216" rx="14"/>
-  <text class="h2-light" x="750" y="173">Umbra 4090</text>
-  <text class="small-light" x="750" y="195">Local GPU speech service</text>
+  <rect class="panel-dark" x="752" y="140" width="158" height="208" rx="14"/>
+  <text class="h2-light" x="774" y="174">Umbra 4090</text>
+  <text class="small-light" x="774" y="196">Local GPU speech</text>
 
-  <rect class="gpu-chip" x="750" y="216" width="132" height="30" rx="8"/>
-  <circle class="gpu-light" cx="769" cy="231" r="6"/>
-  <text class="body-light" x="784" y="236">Kokoro TTS</text>
+  <rect class="gpu-chip" x="774" y="216" width="112" height="30" rx="8"/>
+  <circle class="gpu-light" cx="793" cy="231" r="6"/>
+  <text class="body-light" x="808" y="236">Kokoro</text>
 
-  <rect class="gpu-chip" x="750" y="258" width="132" height="30" rx="8"/>
-  <circle class="gpu-light" cx="769" cy="273" r="6"/>
-  <text class="body-light" x="784" y="278">Whisper STT</text>
+  <rect class="gpu-chip" x="774" y="258" width="112" height="30" rx="8"/>
+  <circle class="gpu-light" cx="793" cy="273" r="6"/>
+  <text class="body-light" x="808" y="278">Whisper</text>
 
-  <rect class="gpu-chip" x="750" y="300" width="132" height="30" rx="8"/>
-  <circle class="gpu-light" cx="769" cy="315" r="6"/>
-  <text class="body-light" x="784" y="320">Ollama map</text>
+  <rect class="gpu-chip" x="774" y="300" width="112" height="30" rx="8"/>
+  <circle class="gpu-light" cx="793" cy="315" r="6"/>
+  <text class="body-light" x="808" y="320">Ollama</text>
 
   <path class="wave" d="M764 111c14-20 25 20 39 0s25 20 39 0 25 20 39 0"/>
-  <text class="small" x="58" y="372">Default path: local GPU speech. Optional OpenAI backend is explicit and key-controlled.</text>
+  <text class="footer" x="512" y="374" text-anchor="middle">Local GPU default. Optional OpenAI is explicit and key-controlled.</text>
+
+  <g class="recording-hud">
+    <rect class="panel-dark" x="72" y="326" width="236" height="48" rx="12"/>
+    <circle class="dot-red" cx="93" cy="344" r="5"/>
+    <text class="small-light" x="107" y="348">DocReader recording...</text>
+    <circle cx="285" cy="344" r="11" fill="#2c3430" stroke="#59645d"/>
+    <text class="small-light" x="285" y="348" text-anchor="middle">x</text>
+    <rect x="92" y="359" width="184" height="5" rx="2.5" fill="#5b655f"/>
+    <rect class="meter-fill" x="92" y="359" width="184" height="5" rx="2.5"/>
+  </g>
 </svg>

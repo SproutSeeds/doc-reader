@@ -45,6 +45,14 @@ updates the README animation and package metadata around strict 4090 Kokoro TTS,
 native recording HUD cancel control. OpenAI remains available as an explicit
 optional backend instead of the primary operating path.
 
+## 0.3.1
+
+`0.3.1` tightens the README and npm animation so the Mac shortcuts are explicit:
+highlighted text plus Right Command triggers Kokoro TTS readback, and holding
+ALT for about 1.5 seconds turns on the Whisper STT microphone path. It also
+adds spacing around the recording HUD and keeps the local GPU workflow copy
+inside the visible cards.
+
 Before publishing:
 
 ```bash
