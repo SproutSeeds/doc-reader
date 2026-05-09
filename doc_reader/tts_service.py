@@ -64,16 +64,40 @@ class EngineRegistry:
         self._load_errors: dict[str, str] = {}
 
     def start_background_preload(self) -> None:
-        if "whisper" not in self.enabled_engines:
-            return
-        if not _env_flag("DOC_READER_STT_PRELOAD", True):
+        preload_kokoro = "kokoro" in self.enabled_engines and _env_flag("DOC_READER_KOKORO_PRELOAD", True)
+        preload_whisper = "whisper" in self.enabled_engines and _env_flag("DOC_READER_STT_PRELOAD", True)
+        if not preload_kokoro and not preload_whisper:
             return
         thread = threading.Thread(
-            target=self._preload_whisper,
-            name="doc-reader-whisper-preload",
+            target=self._preload_models,
+            args=(preload_kokoro, preload_whisper),
+            name="doc-reader-model-preload",
             daemon=True,
         )
         thread.start()
+
+    def _preload_models(self, preload_kokoro: bool, preload_whisper: bool) -> None:
+        # Kokoro/Torch must claim its cuDNN DLLs before faster-whisper/ctranslate2.
+        # Loading ctranslate2's cudnn64_9.dll first can crash Kokoro on Windows CUDA.
+        if preload_kokoro:
+            self._preload_kokoro()
+        if preload_whisper:
+            self._preload_whisper()
+
+    def _preload_kokoro(self) -> None:
+        started = time.perf_counter()
+        try:
+            self._synthesize_kokoro("Doc Reader ready.", DEFAULT_KOKORO_VOICE)
+            print(
+                f"[doc-reader-tts] preloaded kokoro seconds={time.perf_counter() - started:.2f}",
+                flush=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[doc-reader-tts] kokoro preload failed: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def _preload_whisper(self) -> None:
         model_name = _env("DOC_READER_STT_MODEL", DEFAULT_STT_MODEL)

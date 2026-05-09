@@ -816,6 +816,8 @@ set DOC_READER_TTS_DEVICE=cuda
 set DOC_READER_STT_MODEL=large-v3
 set DOC_READER_STT_BEAM_SIZE=1
 set DOC_READER_STT_PRELOAD=1
+set DOC_READER_KOKORO_PRELOAD=1
+set PATH=%ROOT%\.venv\Lib\site-packages\torch\lib;%PATH%
 if not exist logs mkdir logs
 :restart
 "%ROOT%\\.venv\\Scripts\\python.exe" -m doc_reader.tts_service --host %DOC_READER_TTS_HOST% --port %DOC_READER_TTS_PORT% --engines %DOC_READER_TTS_ENGINES% --device cuda >> "%ROOT%\\logs\\tts.log" 2>> "%ROOT%\\logs\\tts.err.log"

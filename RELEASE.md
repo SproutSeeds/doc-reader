@@ -65,6 +65,14 @@ single-beam Whisper decode while keeping `large-v3` as the default model.
 Selected-text readback also accepts Command-L in addition to the Right Command
 gesture and legacy control chords.
 
+## 0.3.3
+
+`0.3.3` fixes strict 4090 Kokoro TTS after the `0.3.2` Whisper preload change.
+The Umbra sidecar now preloads Kokoro before Whisper and starts with Torch's CUDA
+DLL directory ahead of ctranslate2's bundled cuDNN DLL. This keeps the app on the
+strict 4090 Kokoro path while avoiding the Windows CUDA symbol crash that reset
+speech requests during Kokoro load.
+
 Before publishing:
 
 ```bash
