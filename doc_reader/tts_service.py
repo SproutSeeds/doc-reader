@@ -22,6 +22,7 @@ DEFAULT_ENGINES = ("chatterbox", "kokoro")
 DEFAULT_KOKORO_VOICE = "af_heart"
 DEFAULT_CHATTERBOX_VOICE = "stock"
 DEFAULT_STT_MODEL = "large-v3"
+DEFAULT_STT_BEAM_SIZE = 1
 WAV_MIME = "audio/wav"
 DEFAULT_CHATTERBOX_MAX_SEGMENT_CHARS = 260
 DEFAULT_KOKORO_MAX_SEGMENT_CHARS = 700
@@ -61,6 +62,35 @@ class EngineRegistry:
         self._kokoro_pipeline: Any | None = None
         self._whisper_model: Any | None = None
         self._load_errors: dict[str, str] = {}
+
+    def start_background_preload(self) -> None:
+        if "whisper" not in self.enabled_engines:
+            return
+        if not _env_flag("DOC_READER_STT_PRELOAD", True):
+            return
+        thread = threading.Thread(
+            target=self._preload_whisper,
+            name="doc-reader-whisper-preload",
+            daemon=True,
+        )
+        thread.start()
+
+    def _preload_whisper(self) -> None:
+        model_name = _env("DOC_READER_STT_MODEL", DEFAULT_STT_MODEL)
+        started = time.perf_counter()
+        try:
+            self._load_whisper(model_name)
+            print(
+                f"[doc-reader-tts] preloaded whisper model={model_name} "
+                f"seconds={time.perf_counter() - started:.2f}",
+                flush=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[doc-reader-tts] whisper preload failed: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def health(self) -> dict[str, Any]:
         with self._lock:
@@ -113,7 +143,7 @@ class EngineRegistry:
                 str(temp_path),
                 language=language,
                 vad_filter=True,
-                beam_size=_env_int("DOC_READER_STT_BEAM_SIZE", 5),
+                beam_size=_env_int("DOC_READER_STT_BEAM_SIZE", DEFAULT_STT_BEAM_SIZE),
             )
             segments: list[dict[str, Any]] = []
             text_parts: list[str] = []
@@ -639,6 +669,17 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.getenv(name, "").strip().lower()
+    if not value:
+        return default
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def _patch_chatterbox_watermarker() -> None:
     try:
         import perth
@@ -729,6 +770,7 @@ def main() -> int:
         if _normalize_engine(engine)
     }
     registry = EngineRegistry(enabled_engines=engines, device=args.device)
+    registry.start_background_preload()
     server = TTSServer((args.host, args.port), TTSHandler, registry)
     print(
         f"[doc-reader-tts] listening on http://{args.host}:{args.port} "

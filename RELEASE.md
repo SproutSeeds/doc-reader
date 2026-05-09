@@ -53,6 +53,18 @@ ALT for about 1.5 seconds turns on the Whisper STT microphone path. It also
 adds spacing around the recording HUD and keeps the local GPU workflow copy
 inside the visible cards.
 
+## 0.3.2
+
+`0.3.2` hardens the installed macOS helper and local GPU STT path. The recording
+HUD now has an x cancel button that stays above other windows, Esc can cancel a
+stuck recording, and stale recordings are surfaced instead of silently latching.
+The web app serves Doc Reader favicon, Apple touch icon, and web manifest
+metadata for saved web shortcuts. Local 4090 STT is enabled by default, Umbra
+preloads Whisper after service start, and interactive dictation uses a faster
+single-beam Whisper decode while keeping `large-v3` as the default model.
+Selected-text readback also accepts Command-L in addition to the Right Command
+gesture and legacy control chords.
+
 Before publishing:
 
 ```bash

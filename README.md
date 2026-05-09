@@ -10,8 +10,9 @@ A macOS-first, local-GPU speech workspace for reading documents, capturing
 dictation, and keeping the resulting material organized in one local Library.
 
 It streams `.pdf`, `.docx`, `.txt`, and `.md` files through local neural TTS,
-captures Option-key dictation through local Whisper, and keeps playback
-continuous by preparing later chunks in the background.
+reads highlighted text with Right Command or Command-L, captures Option-key
+dictation through local Whisper, and keeps playback continuous by preparing
+later chunks in the background.
 
 ## Why this exists
 
@@ -144,7 +145,8 @@ Benchmark reports and sample audio are saved under
 ## Local 4090 speech-to-text
 
 Doc Reader can also use the Umbra 4090 service for local dictation through
-Whisper. This path is opt-in, runs through Tailscale, and does not call an API.
+Whisper. This path is the default STT path, runs through Tailscale, and does not
+call an API.
 
 Setup is part of the Umbra service install:
 
@@ -154,11 +156,11 @@ read-docs tts-umbra-start
 read-docs restart
 ```
 
-Open the canonical web app and enable `Hold Option for 4090 dictation`. Choose
-the microphone from the Dictation settings if the system default is not the
-input you want. Put the cursor in a text field, then hold the Option/Alt key to
-record from the selected Mac microphone. Doc Reader shows a small recording HUD
-while the key is held, sends the audio to Umbra when the key is released,
+Open the canonical web app and confirm `Hold Option for 4090 dictation` is on.
+Choose the microphone from the Dictation settings if the system default is not
+the input you want. Put the cursor in a text field, then hold the Option/Alt key
+to record from the selected Mac microphone. Doc Reader shows a small recording
+HUD while the key is held, sends the audio to Umbra when the key is released,
 inserts the transcription at the cursor, and adds the transcription as a
 `Dictation` card in the web app.
 
@@ -186,16 +188,17 @@ export DOC_READER_ANALYSIS_URL=http://100.72.151.28:11434
 export DOC_READER_ANALYSIS_MODEL=llama3.1:8b
 ```
 
-The first transcription can take longer while `large-v3` loads on the 4090.
-After warmup, short dictations should return quickly. macOS may ask for
-microphone permission the first time the native app records audio. The web app
-shows the selected input device, microphone authorization, Accessibility, and
-Input Monitoring state. It also shows whether the native app helper is online;
-use `Start Helper` if the web page is up but the hold-Option listener is not
-running. If the HUD does not appear while Doc Reader is in the background, allow
-`Doc Reader.app` in macOS Privacy & Security for Input Monitoring. Accessibility
-is also required for automatic insertion into the active text field; without it,
-Doc Reader copies the transcription to the clipboard.
+Umbra preloads `large-v3` after service start so the first real dictation does
+not pay the model-load cost. Short warm dictations should return quickly. macOS
+may ask for microphone permission the first time the native app records audio.
+The web app shows the selected input device, microphone authorization,
+Accessibility, and Input Monitoring state. It also shows whether the native app
+helper is online; use `Start Helper` if the web page is up but the hold-Option
+listener is not running. If the HUD does not appear while Doc Reader is in the
+background, allow `Doc Reader.app` in macOS Privacy & Security for Input
+Monitoring. Accessibility is also required for automatic insertion into the
+active text field; without it, Doc Reader copies the transcription to the
+clipboard.
 
 ## Quick start: source checkout
 
@@ -306,7 +309,8 @@ What it gives you:
 - Pause/resume and stop controls call the web app.
 - Persistent Library cards for documents, pasted text, clipboard text,
   highlighted text, dictation, and external app handoffs.
-- Optional Option/Alt hold-to-record dictation with microphone selection, 4090 Whisper, active-field insertion, and copyable Dictation cards.
+- Option/Alt hold-to-record dictation with microphone selection, 4090 Whisper, active-field insertion, and copyable Dictation cards.
+- Highlighted-text readback through Right Command, Command-L, or the right-click Services item.
 - Signal Map metrics and batch analysis for local reading and dictation material.
 - Web settings for strict 4090, Mac-local, optional OpenAI API, and system speech.
 - OpenAI API keys are loaded only when OpenAI API is explicitly selected.

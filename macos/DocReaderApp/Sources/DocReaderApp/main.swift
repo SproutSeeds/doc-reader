@@ -1580,9 +1580,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let optionKeyCodes: Set<UInt16> = [58, 61]
     private let rightCommandKeyCode: UInt16 = 54
     private let readSelectedTextKeyCode: UInt16 = 15
+    private let commandLReadSelectedTextKeyCode: UInt16 = 37
     private let dictationStartDelaySeconds: TimeInterval = 0.16
     private let readbackGestureDelaySeconds: TimeInterval = 0.08
     private let minimumToggleStopSeconds: TimeInterval = 0.85
+    private let maximumDictationRecordingSeconds: TimeInterval = 300
+    private let staleRecordingLevelSeconds: TimeInterval = 30
     private var selectedTextReadInProgress = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -1596,6 +1599,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         installSelectedTextReadbackMonitor()
         ensureWebAppRunning()
         statusTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
+            self?.enforceDictationRecordingSafetyLimits()
             self?.refreshWebState()
             self?.publishNativeDictationStatus()
         }
@@ -1634,7 +1638,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Open DocReader Page", action: #selector(openReader), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Read Clipboard in DocReader", action: #selector(readClipboard), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Read Selected Text (Right Command)", action: #selector(readSelectedText), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Read Selected Text (Right Command or Command-L)", action: #selector(readSelectedText), keyEquivalent: ""))
         menu.addItem(pauseMenuItem)
         menu.addItem(stopMenuItem)
         menu.addItem(.separator())
@@ -1791,25 +1795,37 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleReadbackHotkey(_ event: NSEvent) {
-        if readbackKeyWasDown {
-            cancelPendingReadbackGesture(reason: "right command readback canceled by key chord")
+        if event.keyCode == 53, audioRecorder != nil || recordingStartPending {
+            cancelDictationRecording()
+            return
         }
-        guard event.keyCode == readSelectedTextKeyCode, !event.isARepeat else {
+        guard !event.isARepeat else {
             return
         }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let usesControlCommand = flags.contains(.control) && flags.contains(.command)
         let usesControlOption = flags.contains(.control) && flags.contains(.option)
-        guard usesControlCommand || usesControlOption else {
+        let usesLegacyReadback = event.keyCode == readSelectedTextKeyCode && (usesControlCommand || usesControlOption)
+        let usesCommandLReadback = event.keyCode == commandLReadSelectedTextKeyCode
+            && flags.contains(.command)
+            && flags.intersection([.control, .option, .shift]).isEmpty
+        if readbackKeyWasDown && !usesLegacyReadback && !usesCommandLReadback {
+            cancelPendingReadbackGesture(reason: "right command readback canceled by key chord")
+        }
+        guard usesLegacyReadback || usesCommandLReadback else {
             return
         }
         pendingDictationStart?.cancel()
         pendingDictationStart = nil
+        pendingReadbackGesture?.cancel()
+        pendingReadbackGesture = nil
+        readbackKeyWasDown = false
+        readbackGestureCanceled = false
         if optionKeyWasDown, audioRecorder == nil, !recordingStartPending {
             optionKeyWasDown = false
             dictationGestureActive = false
         }
-        logDictation("selected-text readback hotkey")
+        logDictation(usesCommandLReadback ? "command-l selected-text readback" : "selected-text readback hotkey")
         readSelectedText()
     }
 
@@ -2210,6 +2226,29 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func enforceDictationRecordingSafetyLimits() {
+        guard audioRecorder != nil || recordingStartPending else {
+            return
+        }
+        let elapsed = recordingStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+        if elapsed >= maximumDictationRecordingSeconds {
+            optionKeyWasDown = false
+            dictationGestureActive = false
+            dictationLatchedByRapidRelease = false
+            lastDictationGestureAt = Date()
+            statusMenuItem.title = "Dictation auto-stopped after five minutes."
+            logDictation(String(format: "recording auto-stopped after %.2fs", elapsed))
+            stopDictationRecording(send: true)
+            return
+        }
+        if audioRecorder != nil,
+           Date().timeIntervalSince(lastDictationAudioLevelAt) >= staleRecordingLevelSeconds {
+            showRecordingOverlay(text: "DocReader recording... tap Option, Esc, or x to stop")
+            statusMenuItem.title = "Recording dictation. Tap Option, Esc, or x to stop."
+            publishNativeDictationStatus(activeMicrophoneID: selectedMicrophoneDevice()?.uniqueID ?? "")
+        }
+    }
+
     private func selectedMicrophoneDevice() -> AVCaptureDevice? {
         let devices = audioCaptureDevices()
         if !selectedMicrophoneID.isEmpty,
@@ -2246,9 +2285,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func publishNativeDictationStatus(activeMicrophoneID overrideActiveMicrophoneID: String? = nil) {
-        guard isWebHealthy() else {
-            return
-        }
         let devices = audioCaptureDevices().map {
             ["id": $0.uniqueID, "name": $0.localizedName]
         }
@@ -2277,7 +2313,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         var request = URLRequest(url: webURL(path: "/api/native/dictation"))
         request.httpMethod = "POST"
-        request.timeoutInterval = 1.5
+        request.timeoutInterval = 0.6
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         URLSession.shared.dataTask(with: request).resume()
@@ -2412,7 +2448,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             var request = URLRequest(url: self.webURL(path: "/api/transcribe"))
             request.httpMethod = "POST"
-            request.timeoutInterval = 360
+            request.timeoutInterval = 120
             request.setValue(contentType, forHTTPHeaderField: "Content-Type")
             request.setValue("en", forHTTPHeaderField: "X-Doc-Reader-Language")
             if elapsed > 0 {
@@ -2622,6 +2658,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         recordingLabel?.stringValue = text
         recordingCancelButton?.isHidden = audioRecorder == nil && !recordingStartPending
         updateRecordingLevelMeter(dictationAudioLevel)
+        recordingWindow?.makeKeyAndOrderFront(nil)
         recordingWindow?.orderFrontRegardless()
     }
 

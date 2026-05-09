@@ -7,16 +7,19 @@ import os
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import threading
 import time
 import tempfile
 import uuid
+import zlib
 from collections import Counter
 from dataclasses import dataclass, asdict, field, fields
 from email.parser import BytesParser
 from email.policy import default
+from functools import lru_cache
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -61,7 +64,7 @@ SPEECH_BACKENDS = {
     "macsay": "macOS Voice",
     "openai": "OpenAI API",
 }
-DEFAULT_STT_ENABLED = False
+DEFAULT_STT_ENABLED = True
 STYLE_STOP_WORDS = frozenset(
     {
         "a",
@@ -813,16 +816,25 @@ class ReaderService:
             raise ValueError("No audio to transcribe.")
 
         started = time.perf_counter()
+        source_bytes = len(audio)
+        normalize_started = time.perf_counter()
         normalized_audio, normalized_content_type, normalization = _normalize_stt_audio(
             audio,
             content_type=content_type,
             elapsed_seconds=elapsed_seconds,
         )
+        normalize_seconds = time.perf_counter() - normalize_started
+        if isinstance(normalization, dict):
+            normalization["seconds"] = round(normalize_seconds, 3)
+            normalization["source_bytes"] = source_bytes
+            normalization["normalized_bytes"] = len(normalized_audio)
+        transcribe_started = time.perf_counter()
         result = _transcribe_on_umbra(
             normalized_audio,
             content_type=normalized_content_type,
             language=language,
         )
+        transcribe_seconds = time.perf_counter() - transcribe_started
         result["normalization"] = normalization
         text = str(result.get("text") or "").strip()
         item_payload = None
@@ -839,9 +851,18 @@ class ReaderService:
             else:
                 item = self.add_text(text, label="Dictation", kind="dictation")
             item_payload = self._item_payload(item)
+        total_seconds = time.perf_counter() - started
+        print(
+            "[doc-reader-stt] "
+            f"source_bytes={source_bytes} normalized_bytes={len(normalized_audio)} "
+            f"elapsed={elapsed_seconds or 0:.2f}s normalize={normalize_seconds:.2f}s "
+            f"umbra={transcribe_seconds:.2f}s total={total_seconds:.2f}s chars={len(text)}",
+            file=sys.stderr,
+            flush=True,
+        )
         with self._lock:
             self._status = (
-                f"Dictation transcribed in {time.perf_counter() - started:.1f}s."
+                f"Dictation transcribed in {total_seconds:.1f}s."
                 if text
                 else "Dictation produced no text."
             )
@@ -1449,9 +1470,10 @@ class DocReaderHandler(BaseHTTPRequestHandler):
         if route_path == "/":
             self._send_html(INDEX_HTML)
             return
-        if route_path == "/favicon.ico":
-            self.send_response(HTTPStatus.NO_CONTENT)
-            self.end_headers()
+        asset = _web_metadata_asset(route_path)
+        if asset is not None:
+            data, content_type = asset
+            self._send_binary(data, content_type=content_type)
             return
         if route_path == "/healthz":
             self._send_json(self.reader.health())
@@ -1505,6 +1527,26 @@ class DocReaderHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
         self.send_error(HTTPStatus.NOT_FOUND)
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        route_path = parsed.path
+        if route_path == "/":
+            self._send_headers_only(
+                content_type="text/html; charset=utf-8",
+                content_length=len(INDEX_HTML.encode("utf-8")),
+            )
+            return
+        asset = _web_metadata_asset(route_path)
+        if asset is not None:
+            data, content_type = asset
+            self._send_headers_only(content_type=content_type, content_length=len(data))
+            return
+        self._send_headers_only(
+            status=HTTPStatus.NOT_FOUND,
+            content_type="application/json; charset=utf-8",
+            content_length=0,
+        )
 
     def do_POST(self) -> None:  # noqa: N802
         try:
@@ -1669,6 +1711,19 @@ class DocReaderHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def _send_headers_only(
+        self,
+        *,
+        content_type: str,
+        content_length: int,
+        status: HTTPStatus = HTTPStatus.OK,
+    ) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type or "application/octet-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(max(0, content_length)))
+        self.end_headers()
 
 
 class DocReaderHTTPServer(ThreadingHTTPServer):
@@ -2531,6 +2586,7 @@ def _normalize_stt_audio(
 
 def _transcribe_on_umbra(audio: bytes, *, content_type: str, language: str | None = None) -> dict[str, Any]:
     base_url = _env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL).rstrip("/")
+    timeout_seconds = max(10, _env_int("DOC_READER_STT_TIMEOUT_SECONDS", 90))
     headers = {
         "Content-Type": content_type or "audio/wav",
         "X-Doc-Reader-Filename": "dictation.wav",
@@ -2544,8 +2600,9 @@ def _transcribe_on_umbra(audio: bytes, *, content_type: str, language: str | Non
         method="POST",
         headers=headers,
     )
+    started = time.perf_counter()
     try:
-        with urlrequest.urlopen(request, timeout=300) as response:
+        with urlrequest.urlopen(request, timeout=timeout_seconds) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except urlerror.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
@@ -2557,6 +2614,8 @@ def _transcribe_on_umbra(audio: bytes, *, content_type: str, language: str | Non
         raise RuntimeError("4090 transcription returned an invalid response.")
     if payload.get("ok") is False:
         raise RuntimeError(str(payload.get("error") or "4090 transcription failed."))
+    payload["request_seconds"] = round(time.perf_counter() - started, 3)
+    payload["service_url"] = base_url
     return payload
 
 
@@ -2679,11 +2738,178 @@ def _managed_root() -> Path:
     return Path.home() / ".doc-reader-managed"
 
 
+DOC_READER_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Doc Reader">
+  <rect width="512" height="512" rx="112" fill="#17201c"/>
+  <rect x="148" y="84" width="216" height="344" rx="34" fill="#f4f8f4"/>
+  <path d="M286 84h44c18 0 34 16 34 34v44z" fill="#dce9e0"/>
+  <rect x="190" y="176" width="132" height="20" rx="10" fill="#4d5c54"/>
+  <rect x="190" y="226" width="156" height="20" rx="10" fill="#4d5c54"/>
+  <rect x="190" y="276" width="108" height="20" rx="10" fill="#4d5c54"/>
+  <rect x="190" y="354" width="50" height="18" rx="9" fill="#1f9b68"/>
+  <rect x="252" y="330" width="34" height="42" rx="10" fill="#2f7fd2"/>
+  <rect x="300" y="360" width="46" height="12" rx="6" fill="#b77a16"/>
+</svg>"""
+
+
+def _doc_reader_manifest() -> str:
+    return json.dumps(
+        {
+            "name": "Doc Reader",
+            "short_name": "Doc Reader",
+            "description": "Local GPU speech workspace for reading, dictation, and library analysis.",
+            "start_url": "/",
+            "scope": "/",
+            "display": "standalone",
+            "background_color": "#f7f8f6",
+            "theme_color": "#17201c",
+            "icons": [
+                {
+                    "src": "/icons/doc-reader-192.png",
+                    "sizes": "192x192",
+                    "type": "image/png",
+                    "purpose": "any maskable",
+                },
+                {
+                    "src": "/icons/doc-reader-512.png",
+                    "sizes": "512x512",
+                    "type": "image/png",
+                    "purpose": "any maskable",
+                },
+                {
+                    "src": "/icons/doc-reader.svg",
+                    "sizes": "any",
+                    "type": "image/svg+xml",
+                    "purpose": "any",
+                },
+            ],
+        },
+        separators=(",", ":"),
+    )
+
+
+def _web_metadata_asset(route_path: str) -> tuple[bytes, str] | None:
+    if route_path == "/favicon.ico":
+        return _doc_reader_favicon_ico(), "image/x-icon"
+    if route_path in {"/favicon.svg", "/icons/doc-reader.svg"}:
+        return DOC_READER_ICON_SVG.encode("utf-8"), "image/svg+xml; charset=utf-8"
+    if route_path in {"/apple-touch-icon.png", "/icons/doc-reader-180.png"}:
+        return _doc_reader_icon_png(180), "image/png"
+    if route_path == "/icons/doc-reader-192.png":
+        return _doc_reader_icon_png(192), "image/png"
+    if route_path == "/icons/doc-reader-512.png":
+        return _doc_reader_icon_png(512), "image/png"
+    if route_path == "/site.webmanifest":
+        return _doc_reader_manifest().encode("utf-8"), "application/manifest+json; charset=utf-8"
+    return None
+
+
+@lru_cache(maxsize=8)
+def _doc_reader_favicon_ico() -> bytes:
+    png = _doc_reader_icon_png(32)
+    header = struct.pack("<HHH", 0, 1, 1)
+    entry = struct.pack("<BBBBHHII", 32, 32, 0, 0, 1, 32, len(png), 22)
+    return header + entry + png
+
+
+@lru_cache(maxsize=12)
+def _doc_reader_icon_png(size: int) -> bytes:
+    size = max(16, min(1024, int(size)))
+    pixels = bytearray(size * size * 4)
+    _fill_rect(pixels, size, 0, 0, size, size, (23, 32, 28, 255))
+
+    document_x = size * 0.289
+    document_y = size * 0.164
+    document_w = size * 0.422
+    document_h = size * 0.672
+    _fill_rounded_rect(pixels, size, document_x, document_y, document_w, document_h, size * 0.066, (244, 248, 244, 255))
+    _fill_rect(pixels, size, size * 0.559, document_y, size * 0.086, size * 0.153, (220, 233, 224, 255))
+
+    ink = (77, 92, 84, 255)
+    _fill_rounded_rect(pixels, size, size * 0.371, size * 0.344, size * 0.258, size * 0.039, size * 0.020, ink)
+    _fill_rounded_rect(pixels, size, size * 0.371, size * 0.441, size * 0.305, size * 0.039, size * 0.020, ink)
+    _fill_rounded_rect(pixels, size, size * 0.371, size * 0.539, size * 0.211, size * 0.039, size * 0.020, ink)
+
+    _fill_rounded_rect(pixels, size, size * 0.371, size * 0.691, size * 0.098, size * 0.035, size * 0.018, (31, 155, 104, 255))
+    _fill_rounded_rect(pixels, size, size * 0.492, size * 0.645, size * 0.066, size * 0.082, size * 0.020, (47, 127, 210, 255))
+    _fill_rounded_rect(pixels, size, size * 0.586, size * 0.703, size * 0.090, size * 0.023, size * 0.012, (183, 122, 22, 255))
+    return _encode_png_rgba(size, size, pixels)
+
+
+def _fill_rect(pixels: bytearray, canvas: int, x: float, y: float, width: float, height: float, color: tuple[int, int, int, int]) -> None:
+    x0 = max(0, int(round(x)))
+    y0 = max(0, int(round(y)))
+    x1 = min(canvas, int(round(x + width)))
+    y1 = min(canvas, int(round(y + height)))
+    for py in range(y0, y1):
+        offset = (py * canvas + x0) * 4
+        for _px in range(x0, x1):
+            pixels[offset:offset + 4] = bytes(color)
+            offset += 4
+
+
+def _fill_rounded_rect(
+    pixels: bytearray,
+    canvas: int,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    radius: float,
+    color: tuple[int, int, int, int],
+) -> None:
+    x0 = max(0, int(round(x)))
+    y0 = max(0, int(round(y)))
+    x1 = min(canvas, int(round(x + width)))
+    y1 = min(canvas, int(round(y + height)))
+    radius = max(0.0, min(radius, width / 2, height / 2))
+    for py in range(y0, y1):
+        cy = py + 0.5
+        for px in range(x0, x1):
+            cx = px + 0.5
+            dx = max(x + radius - cx, 0.0, cx - (x + width - radius))
+            dy = max(y + radius - cy, 0.0, cy - (y + height - radius))
+            if dx * dx + dy * dy <= radius * radius:
+                offset = (py * canvas + px) * 4
+                pixels[offset:offset + 4] = bytes(color)
+
+
+def _encode_png_rgba(width: int, height: int, pixels: bytes | bytearray) -> bytes:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + kind
+            + data
+            + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+        )
+
+    rows = []
+    stride = width * 4
+    for y in range(height):
+        rows.append(b"\x00" + bytes(pixels[y * stride:(y + 1) * stride]))
+    raw = b"".join(rows)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw, 9))
+        + chunk(b"IEND", b"")
+    )
+
+
 INDEX_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="application-name" content="Doc Reader">
+  <meta name="apple-mobile-web-app-title" content="Doc Reader">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#17201c">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="shortcut icon" href="/favicon.ico">
+  <link rel="alternate icon" href="/favicon.ico" sizes="32x32">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
   <title>Doc Reader</title>
   <style>
     :root {
