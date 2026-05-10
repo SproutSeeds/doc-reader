@@ -55,6 +55,7 @@ CHUNK_DONE_RE = re.compile(r"^\[doc-reader\]\s+chunk-done\s+index=(\d+)\s*$")
 WORD_RE = re.compile(r"[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?")
 NATIVE_HELPER_LABEL = "com.docreader.tray"
 NATIVE_HELPER_STALE_SECONDS = 8.0
+DEFAULT_MICROPHONE_MATCH = "logi,logitech"
 SPEECH_BACKENDS = {
     "tailscale-4090": "Strict 4090 (Kokoro)",
     "auto": "Local fallback",
@@ -689,8 +690,18 @@ class ReaderService:
                 else "Dictation hotkey disabled."
             )
         if "microphone_id" in payload:
-            settings["microphone_id"] = str(payload.get("microphone_id") or "").strip()
-            self._status = "Microphone setting updated."
+            microphone_id = str(payload.get("microphone_id") or "").strip()
+            devices = _sanitized_microphone_devices(settings.get("microphones"))
+            if not microphone_id:
+                preferred_device = _preferred_microphone_device(devices)
+                if preferred_device:
+                    microphone_id = preferred_device["id"]
+                    self._status = f"Microphone pinned to {preferred_device['name']}."
+                else:
+                    self._status = "Microphone setting updated."
+            else:
+                self._status = "Microphone setting updated."
+            settings["microphone_id"] = microphone_id
         self._save_settings(settings)
         return self.state()
 
@@ -744,6 +755,7 @@ class ReaderService:
                 if device_id and name:
                     sanitized.append({"id": device_id, "name": name})
             settings["microphones"] = sanitized
+            _pin_preferred_microphone(settings, sanitized)
         for key in [
             "microphone_authorization",
             "input_monitoring_trusted",
@@ -2361,32 +2373,88 @@ def _clamped_float(value: Any, minimum: float, maximum: float) -> float:
     return min(maximum, max(minimum, number))
 
 
+def _microphone_match_tokens() -> list[str]:
+    configured = _env("DOC_READER_DEFAULT_MICROPHONE_MATCH", DEFAULT_MICROPHONE_MATCH)
+    tokens = [token.strip().lower() for token in configured.split(",")]
+    return [token for token in tokens if token]
+
+
+def _sanitized_microphone_devices(raw_devices: Any) -> list[dict[str, str]]:
+    devices: list[dict[str, str]] = []
+    if not isinstance(raw_devices, list):
+        return devices
+    for device in raw_devices:
+        if not isinstance(device, dict):
+            continue
+        device_id = str(device.get("id") or "").strip()
+        name = str(device.get("name") or "").strip()
+        if device_id and name:
+            devices.append({"id": device_id, "name": name})
+    return devices
+
+
+def _microphone_device_by_id(
+    devices: list[dict[str, str]],
+    microphone_id: str,
+) -> dict[str, str] | None:
+    if not microphone_id:
+        return None
+    for device in devices:
+        if device["id"] == microphone_id:
+            return device
+    return None
+
+
+def _preferred_microphone_device(
+    devices: list[dict[str, str]],
+) -> dict[str, str] | None:
+    tokens = _microphone_match_tokens()
+    for token in tokens:
+        for device in devices:
+            if token in device["name"].lower():
+                return device
+    for token in tokens:
+        for device in devices:
+            if token in device["id"].lower():
+                return device
+    return None
+
+
+def _pin_preferred_microphone(
+    settings: dict[str, Any],
+    devices: list[dict[str, str]],
+) -> dict[str, str] | None:
+    microphone_id = str(settings.get("microphone_id") or "").strip()
+    if _microphone_device_by_id(devices, microphone_id):
+        return None
+    preferred_device = _preferred_microphone_device(devices)
+    if preferred_device:
+        settings["microphone_id"] = preferred_device["id"]
+    return preferred_device
+
+
 def _microphone_payload(settings: dict[str, Any]) -> dict[str, Any]:
-    selected_id = str(settings.get("microphone_id") or "")
-    raw_devices = settings.get("microphones")
+    raw_devices = _sanitized_microphone_devices(settings.get("microphones"))
+    preferred_device = _preferred_microphone_device(raw_devices)
+    configured_id = str(settings.get("microphone_id") or "").strip()
+    selected_device = _microphone_device_by_id(raw_devices, configured_id)
+    if selected_device is None and preferred_device is not None:
+        selected_device = preferred_device
+    selected_id = selected_device["id"] if selected_device is not None else ""
     status_at = float(settings.get("native_dictation_status_at") or 0.0)
     native_age_seconds = max(0.0, time.time() - status_at) if status_at else None
     native_helper_online = (
         native_age_seconds is not None
         and native_age_seconds <= NATIVE_HELPER_STALE_SECONDS
     )
-    devices = [{"id": "", "name": "System Default"}]
-    if isinstance(raw_devices, list):
-        for device in raw_devices:
-            if not isinstance(device, dict):
-                continue
-            device_id = str(device.get("id") or "").strip()
-            name = str(device.get("name") or "").strip()
-            if device_id and name:
-                devices.append({"id": device_id, "name": name})
-    selected_name = "System Default"
-    for device in devices:
-        if device["id"] == selected_id:
-            selected_name = device["name"]
-            break
+    devices = [] if preferred_device is not None else [{"id": "", "name": "System Default"}]
+    devices.extend(raw_devices)
+    selected_name = selected_device["name"] if selected_device is not None else "System Default"
     return {
         "selected_id": selected_id,
         "selected_name": selected_name,
+        "preferred_id": preferred_device["id"] if preferred_device is not None else "",
+        "preferred_name": preferred_device["name"] if preferred_device is not None else "",
         "active_id": str(settings.get("active_microphone_id") or ""),
         "native_helper_online": native_helper_online,
         "native_status_age_seconds": native_age_seconds,

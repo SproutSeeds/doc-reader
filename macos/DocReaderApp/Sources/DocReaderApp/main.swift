@@ -2255,7 +2255,25 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
            let selected = devices.first(where: { $0.uniqueID == selectedMicrophoneID }) {
             return selected
         }
+        if let preferred = preferredMicrophoneDevice(in: devices) {
+            selectedMicrophoneID = preferred.uniqueID
+            return preferred
+        }
         return AVCaptureDevice.default(for: .audio) ?? devices.first
+    }
+
+    private func preferredMicrophoneDevice(in devices: [AVCaptureDevice]) -> AVCaptureDevice? {
+        let tokens = ["logi", "logitech"]
+        if let nameMatch = devices.first(where: { device in
+            let name = device.localizedName.lowercased()
+            return tokens.contains(where: { name.contains($0) })
+        }) {
+            return nameMatch
+        }
+        return devices.first(where: { device in
+            let id = device.uniqueID.lowercased()
+            return tokens.contains(where: { id.contains($0) })
+        })
     }
 
     private func audioCaptureDevices() -> [AVCaptureDevice] {

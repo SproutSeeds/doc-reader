@@ -164,6 +164,11 @@ HUD while the key is held, sends the audio to Umbra when the key is released,
 inserts the transcription at the cursor, and adds the transcription as a
 `Dictation` card in the web app.
 
+When a Logitech headset or mic is attached, Doc Reader pins it as the preferred
+dictation input instead of drifting back to macOS System Default during device
+refreshes. Set `DOC_READER_DEFAULT_MICROPHONE_MATCH` to a comma-separated list
+of name/id tokens to prefer a different dedicated microphone.
+
 The web app keeps read-aloud cards, dictation cards, and external app readings
 in one Library. Filter buttons narrow the Library to Readings, Dictations, or
 Clawdad-origin items. Dictation cards have a copy icon button; clicking it
