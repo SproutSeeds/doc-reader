@@ -84,6 +84,7 @@
         "__tests__/**",
         "public/**",
         "web/**",
+        "vendor/**",
         "build-macos-app",
         "disable-startup",
         "enable-startup",

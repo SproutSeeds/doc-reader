@@ -979,6 +979,10 @@ async function ttsStatus() {
 }
 
 async function loadTailnetApp() {
+  const vendored = join(packageRoot, "vendor", "tailnet-app", "index.mjs");
+  if (existsSync(vendored)) {
+    return import(pathToFileURL(vendored).href);
+  }
   try {
     return await import("@sproutseeds/tailnet-app");
   } catch {

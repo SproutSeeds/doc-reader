@@ -83,6 +83,13 @@ a Read Speed slider, pass the selected WPM into TTS backends, and update a live
 rate-control file so already-running readings pick up speed changes between
 short spoken segments.
 
+## 0.3.5
+
+`0.3.5` keeps the `0.3.4` behavior and makes the npm install self-contained.
+The shared tailnet readiness runtime is vendored inside the `read-docs` package
+so global installs do not depend on npm propagation or visibility for the
+scoped helper package.
+
 Before publishing:
 
 ```bash

@@ -1,6 +1,6 @@
 {
   "name": "read-docs",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "macOS local GPU speech workspace for document reading, dictation, and library analysis.",
   "license": "MIT",
   "type": "module",
@@ -14,6 +14,7 @@
     "docs/readme-animation.svg",
     "macos/",
     "ops/tailnet-app/",
+    "vendor/tailnet-app/",
     "RELEASE.md",
     "disable-startup",
     "enable-startup",
@@ -54,9 +55,6 @@
   "homepage": "https://github.com/SproutSeeds/doc-reader#readme",
   "engines": {
     "node": ">=18"
-  },
-  "dependencies": {
-    "@sproutseeds/tailnet-app": "^0.3.0"
   },
   "publishConfig": {
     "access": "public"
