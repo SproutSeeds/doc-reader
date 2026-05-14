@@ -18,7 +18,9 @@ class ReaderConfig:
     queue_size: int = 8
     first_chunk_words: int = 110
     chunk_words: int = 220
+    speech_segment_words: int = 32
     max_chunks: int | None = None
     start_chunk_index: int = 0
     start_seconds: float = 0.0
+    rate_control_path: Path | None = None
     verbose: bool = False

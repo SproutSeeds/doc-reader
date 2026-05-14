@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { cpSync, existsSync, lstatSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launcher = join(packageRoot, "run-doc-reader");
@@ -23,6 +23,7 @@ const webLaunchAgentLabel = "com.docreader.web";
 const webLaunchAgentPlist = join(homedir(), "Library", "LaunchAgents", `${webLaunchAgentLabel}.plist`);
 const webStdoutLog = join(homedir(), "Library", "Logs", "doc-reader-web.log");
 const webStderrLog = join(homedir(), "Library", "Logs", "doc-reader-web.err.log");
+const readinessStatusFile = process.env.DOC_READER_READINESS_STATUS_FILE || join(managedRoot, "tailnet-readiness.json");
 const ttsMacPort = Number(process.env.DOC_READER_TTS_MAC_PORT || 8772);
 const ttsMacHost = process.env.DOC_READER_TTS_MAC_HOST || "127.0.0.1";
 const ttsMacUrl = process.env.DOC_READER_TTS_MAC_URL || `http://${ttsMacHost}:${ttsMacPort}`;
@@ -65,6 +66,8 @@ macOS app bootstrapper:
   read-docs restart          Refresh the managed copy and restart the agent
   read-docs stop             Stop the running agent without uninstalling it
   read-docs status           Show managed app, LaunchAgent, and Services status
+  read-docs doctor           Check app, tailnet, and speech backend readiness
+  read-docs ensure           Start configured tailnet/speech dependencies and check readiness
   read-docs uninstall        Remove LaunchAgent and Services integration
   read-docs web              Run the local web app in the foreground
   read-docs web-start        Install/start the local web app agent on 127.0.0.1:${webPort}
@@ -123,6 +126,49 @@ function runSilent(command, args, options = {}) {
     stderr: result.stderr || "",
     error: result.error,
   };
+}
+
+function runCapture(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      env: options.env || process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    const timeout = options.timeoutMs
+      ? setTimeout(() => {
+          child.kill("SIGTERM");
+        }, options.timeoutMs)
+      : null;
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      reject(error);
+    });
+    child.on("exit", (code, signal) => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      if (code === 0) {
+        resolve({ stdout, stderr, code: 0 });
+        return;
+      }
+      const error = new Error(stderr.trim() || stdout.trim() || `${command} exited with ${signal || code}`);
+      error.stdout = stdout;
+      error.stderr = stderr;
+      error.code = code ?? 1;
+      reject(error);
+    });
+  });
 }
 
 function macOnly(commandName) {
@@ -469,6 +515,7 @@ async function installApp() {
   const dockExitCode = applicationsAppState() === "installed" ? 0 : installApplicationsApp();
   const serviceExitCode = await runScript("install-context-menu-service");
   const webExitCode = await startWebAgent();
+  await ensureDocReaderReadiness({ startDependencies: true, quiet: false });
   const nativeCleanupExitCode = await cleanupNativeAppProcesses({ keepLaunchAgent: true });
   return dockExitCode || serviceExitCode || webExitCode || nativeCleanupExitCode;
 }
@@ -485,6 +532,7 @@ async function restartApp() {
   registerInstalledApp();
   const dockExitCode = applicationsAppState() === "installed" ? 0 : installApplicationsApp();
   const webExitCode = await startWebAgent();
+  await ensureDocReaderReadiness({ startDependencies: true, quiet: false });
   const nativeCleanupExitCode = await cleanupNativeAppProcesses({ keepLaunchAgent: true });
   return dockExitCode || webExitCode || nativeCleanupExitCode;
 }
@@ -498,6 +546,8 @@ async function startAgent() {
     console.error("[doc-reader] Run 'read-docs install' first.");
     return 1;
   }
+  const webExitCode = await startWebAgent();
+  await ensureDocReaderReadiness({ startDependencies: true, quiet: false });
   if (!isLaunchAgentLoaded()) {
     const bootstrapExitCode = await run("launchctl", [
       "bootstrap",
@@ -513,7 +563,7 @@ async function startAgent() {
   });
   const agentExitCode = await run("launchctl", ["kickstart", "-k", launchAgentTarget()]);
   const nativeCleanupExitCode = await cleanupNativeAppProcesses({ keepLaunchAgent: true });
-  return agentExitCode || nativeCleanupExitCode;
+  return webExitCode || agentExitCode || nativeCleanupExitCode;
 }
 
 async function stopAgent() {
@@ -532,6 +582,22 @@ async function stopAgent() {
 
 function webLocalUrl() {
   return `http://${webHost}:${webPort}`;
+}
+
+async function waitForWebHealth(timeoutMs = 30000) {
+  const started = Date.now();
+  while (Date.now() - started <= timeoutMs) {
+    try {
+      const payload = await fetchJson(`${webLocalUrl()}/healthz`, 1500);
+      if (payload.ok) {
+        return true;
+      }
+    } catch {
+      // Keep polling until launchd has finished starting the web app.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return false;
 }
 
 function tailscaleHost() {
@@ -912,6 +978,124 @@ async function ttsStatus() {
   return 0;
 }
 
+async function loadTailnetApp() {
+  try {
+    return await import("@sproutseeds/tailnet-app");
+  } catch {
+    const sibling = resolve(packageRoot, "..", "tailnet-app", "lib", "index.mjs");
+    if (!existsSync(sibling)) {
+      throw new Error("@sproutseeds/tailnet-app is not installed and no sibling checkout was found.");
+    }
+    return import(pathToFileURL(sibling).href);
+  }
+}
+
+function docReaderTailnetDependencies({ startDependencies }) {
+  const selfCommand = fileURLToPath(import.meta.url);
+  const dependencies = [
+    {
+      name: "umbra-4090-speech",
+      healthUrl: `${ttsUmbraUrl.replace(/\/$/, "")}/healthz`,
+      required: true,
+      feature: "strict 4090 text-to-speech and Whisper dictation",
+      timeoutMs: 30000,
+    },
+    {
+      name: "mac-kokoro",
+      healthUrl: `${ttsMacUrl.replace(/\/$/, "")}/healthz`,
+      required: false,
+      feature: "Mac-local TTS fallback",
+      timeoutMs: 45000,
+    },
+  ];
+
+  if (startDependencies) {
+    dependencies[0].autoStart = true;
+    dependencies[0].startCommand = [process.execPath, selfCommand, "tts-umbra-start"];
+    dependencies[1].autoStart = true;
+    dependencies[1].startCommand = [process.execPath, selfCommand, "tts-mac-start"];
+  }
+
+  return dependencies;
+}
+
+async function ensureDocReaderReadiness({
+  startDependencies = false,
+  json = false,
+  quiet = false,
+} = {}) {
+  const { runTailnetEnsure } = await loadTailnetApp();
+  const result = await runTailnetEnsure(
+    {
+      appName: "doc-reader",
+      host: webHost,
+      port: webPort,
+      httpsPort: webPort,
+      healthPath: "/healthz",
+      autoServe: startDependencies && process.env.DOC_READER_TAILNET_AUTOSERVE !== "0",
+      dependencies: docReaderTailnetDependencies({ startDependencies }),
+      timeoutMs: 6000,
+    },
+    {
+      runner: runCapture,
+    },
+  );
+
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+  } else if (!quiet) {
+    printDocReaderEnsure(result);
+  }
+  writeDocReaderReadinessStatus(result);
+  return result;
+}
+
+function writeDocReaderReadinessStatus(result) {
+  const state = result.ok ? "ready" : result.ready ? "degraded" : "blocked";
+  mkdirSync(dirname(readinessStatusFile), { recursive: true });
+  writeFileSync(
+    readinessStatusFile,
+    `${JSON.stringify({
+      schema: "tailnet-app.readiness/1",
+      appName: "doc-reader",
+      generatedAt: new Date().toISOString(),
+      state,
+      ok: result.ok,
+      ready: result.ready,
+      degraded: result.degraded,
+      blocked: !result.ok,
+      context: result.context,
+      checks: result.checks,
+      dependencies: result.dependencies,
+      started: result.started,
+      failed: result.failed,
+      nextSteps: result.nextSteps,
+    }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+function printDocReaderEnsure(result) {
+  const state = result.ok ? "ready" : result.ready ? "degraded" : "not ready";
+  console.log(`[doc-reader] Startup orchestration: ${state}`);
+  if (result.context?.deviceUrl) {
+    console.log(`[doc-reader] Tailnet URL: ${result.context.deviceUrl}`);
+  }
+  if (result.deviceServe?.attempted) {
+    console.log(
+      `[doc-reader] Tailnet Serve: ${result.deviceServe.ok ? "configured" : `not configured (${result.deviceServe.error})`}`,
+    );
+  }
+  for (const dependency of result.dependencies || []) {
+    const dependencyState = dependency.ok ? "ready" : dependency.required ? "blocked" : "degraded";
+    const started = dependency.start?.attempted ? `, start ${dependency.start.ok ? "ok" : "failed"}` : "";
+    console.log(`[doc-reader] ${dependency.name}: ${dependencyState}${started}`);
+  }
+  for (const nextStep of result.nextSteps || []) {
+    console.log(`[doc-reader] Next: ${nextStep}`);
+  }
+}
+
 async function runTtsBench(extraArgs = []) {
   const prepareExitCode = await prepareManagedRuntime();
   if (prepareExitCode !== 0) {
@@ -996,6 +1180,11 @@ async function startWebAgent() {
   });
   const kickstartExitCode = await run("launchctl", ["kickstart", "-k", webLaunchAgentTarget()]);
   if (kickstartExitCode === 0) {
+    const healthy = await waitForWebHealth();
+    if (!healthy) {
+      console.error(`[doc-reader] Web app did not become healthy at ${webLocalUrl()}/healthz.`);
+      return 1;
+    }
     console.log(`[doc-reader] Web app: ${webLocalUrl()}`);
   }
   return kickstartExitCode;
@@ -1125,6 +1314,12 @@ if (!command || command === "--help" || command === "-h" || command === "help") 
   process.exitCode = await stopAgent();
 } else if (command === "status") {
   process.exitCode = status();
+} else if (command === "doctor") {
+  const result = await ensureDocReaderReadiness({ startDependencies: false, json: args.includes("--json") });
+  process.exitCode = result.ok ? 0 : 1;
+} else if (command === "ensure") {
+  const result = await ensureDocReaderReadiness({ startDependencies: true, json: args.includes("--json") });
+  process.exitCode = result.ready ? 0 : 1;
 } else if (command === "web") {
   process.exitCode = await runWebForeground();
 } else if (command === "web-start") {

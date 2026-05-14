@@ -43,6 +43,9 @@ SUPPORTED_SUFFIXES = {".pdf", ".docx", ".txt", ".md", ".markdown"}
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8766
 DEFAULT_RATE = 180
+MIN_READ_RATE = 90
+MAX_READ_RATE = 300
+READ_RATE_STEP = 5
 DEFAULT_LIBRARY_AUDIO_TIMEOUT_SECONDS = 300
 DEFAULT_ANALYSIS_INTERVAL_SECONDS = 1800
 DEFAULT_ANALYSIS_INITIAL_DELAY_SECONDS = 60
@@ -196,6 +199,7 @@ class ReaderService:
         self.analysis_path = root / "library-analysis.json"
         self.analysis_batch_dir = root / "library-analysis-batches"
         self.settings_path = root / "web-settings.json"
+        self.rate_control_path = root / "read-rate-control.json"
         self.root.mkdir(parents=True, exist_ok=True)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.text_dir.mkdir(parents=True, exist_ok=True)
@@ -233,6 +237,7 @@ class ReaderService:
             items = self._items()
             metrics = self._metrics_snapshot(items)
             library = [self._item_payload(item) for item in items]
+            settings = self._settings()
             readings = [
                 self._item_payload(item)
                 for item in items
@@ -256,6 +261,7 @@ class ReaderService:
                 "clawdad": clawdad_items,
                 "metrics": metrics,
                 "analysis": self.analysis_status(items=items, metrics=metrics),
+                "settings": self._settings_payload(settings),
             }
 
     def health(self) -> dict[str, Any]:
@@ -599,6 +605,8 @@ class ReaderService:
             display_seconds = saved_seconds
 
             backend = self._speech_backend()
+            read_rate = self._read_rate()
+            self._write_rate_control(read_rate)
             args = [
                 sys.executable,
                 "-m",
@@ -609,7 +617,9 @@ class ReaderService:
                 "--style",
                 os.getenv("DOC_READER_WEB_STYLE", "balanced"),
                 "--rate",
-                str(DEFAULT_RATE),
+                str(read_rate),
+                "--rate-control-file",
+                str(self.rate_control_path),
                 "--speech-backend",
                 backend,
                 "--start-chunk-index",
@@ -689,6 +699,12 @@ class ReaderService:
                 if settings["stt_enabled"]
                 else "Dictation hotkey disabled."
             )
+        rate_value = payload.get("read_rate", payload.get("readRate"))
+        if rate_value is not None:
+            read_rate = _normalize_read_rate(rate_value)
+            settings["read_rate"] = read_rate
+            self._write_rate_control(read_rate)
+            self._status = f"Read speed: {read_rate} WPM."
         if "microphone_id" in payload:
             microphone_id = str(payload.get("microphone_id") or "").strip()
             devices = _sanitized_microphone_devices(settings.get("microphones"))
@@ -1155,8 +1171,9 @@ class ReaderService:
                 item.updated_at = item.audio_updated_at
                 self._upsert_item(item)
                 text = _read_text_file(Path(item.source_path))
+                read_rate = self._read_rate()
 
-            audio = _synthesize_library_audio(text)
+            audio = _synthesize_library_audio(text, rate=read_rate)
             audio_path = self.audio_dir / f"{item_id}.wav"
             temp_path = audio_path.with_suffix(f".{uuid.uuid4().hex}.tmp")
             temp_path.write_bytes(audio)
@@ -1271,6 +1288,29 @@ class ReaderService:
             return False
         return DEFAULT_STT_ENABLED
 
+    def _read_rate(self) -> int:
+        configured = self._settings().get("read_rate")
+        if configured is not None:
+            return _normalize_read_rate(configured)
+        return _normalize_read_rate(os.getenv("DOC_READER_WEB_RATE", DEFAULT_RATE))
+
+    def _settings_payload(self, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+        settings = settings or self._settings()
+        read_rate = (
+            _normalize_read_rate(settings.get("read_rate"))
+            if settings.get("read_rate") is not None
+            else _normalize_read_rate(os.getenv("DOC_READER_WEB_RATE", DEFAULT_RATE))
+        )
+        return {
+            "read_rate": read_rate,
+            "readRate": read_rate,
+            "read_speed": _speed_for_rate(read_rate),
+            "readSpeed": _speed_for_rate(read_rate),
+            "min_read_rate": MIN_READ_RATE,
+            "max_read_rate": MAX_READ_RATE,
+            "read_rate_step": READ_RATE_STEP,
+        }
+
     def _settings(self) -> dict[str, Any]:
         try:
             payload = json.loads(self.settings_path.read_text(encoding="utf-8"))
@@ -1282,6 +1322,19 @@ class ReaderService:
         temp_path = self.settings_path.with_suffix(".tmp")
         temp_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
         temp_path.replace(self.settings_path)
+
+    def _write_rate_control(self, rate: int) -> None:
+        read_rate = _normalize_read_rate(rate)
+        payload = {
+            "read_rate": read_rate,
+            "readRate": read_rate,
+            "read_speed": _speed_for_rate(read_rate),
+            "readSpeed": _speed_for_rate(read_rate),
+            "updated_at": time.time(),
+        }
+        temp_path = self.rate_control_path.with_suffix(".tmp")
+        temp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        temp_path.replace(self.rate_control_path)
 
     def _metrics_snapshot(self, items: list[HistoryItem]) -> dict[str, Any]:
         by_channel: dict[str, dict[str, int]] = {
@@ -2506,7 +2559,7 @@ def _service_health(base_url: str) -> dict[str, Any]:
         }
 
 
-def _synthesize_library_audio(text: str) -> bytes:
+def _synthesize_library_audio(text: str, *, rate: int = DEFAULT_RATE) -> bytes:
     cleaned = str(text or "").strip()
     if not cleaned:
         raise ValueError("No text to synthesize.")
@@ -2538,6 +2591,7 @@ def _synthesize_library_audio(text: str) -> bytes:
                 text=cleaned,
                 engine=engine,
                 voice=_env("DOC_READER_HTTP_TTS_VOICE", ""),
+                speed=_speed_for_rate(_normalize_read_rate(rate)),
             )
         except Exception as exc:  # noqa: BLE001
             failures.append(f"{base_url}: {exc}")
@@ -2550,10 +2604,12 @@ def _synthesize_library_audio_from_url(
     text: str,
     engine: str,
     voice: str,
+    speed: float,
 ) -> bytes:
     payload = {
         "engine": engine,
         "text": text,
+        "speed": speed,
     }
     if voice:
         payload["voice"] = voice
@@ -2758,6 +2814,20 @@ def _optional_float(value: object) -> float | None:
     if not parsed == parsed or parsed <= 0:
         return None
     return parsed
+
+
+def _normalize_read_rate(value: object) -> int:
+    try:
+        parsed = round(float(str(value).strip()))
+    except (TypeError, ValueError):
+        parsed = DEFAULT_RATE
+    if parsed != parsed:
+        parsed = DEFAULT_RATE
+    return max(MIN_READ_RATE, min(MAX_READ_RATE, int(parsed)))
+
+
+def _speed_for_rate(rate: int) -> float:
+    return round(max(0.5, min(2.0, float(rate) / DEFAULT_RATE)), 3)
 
 
 def _header_source_meta(headers: Any) -> dict[str, Any]:
@@ -3080,6 +3150,24 @@ INDEX_HTML = r"""<!doctype html>
       min-height: 36px;
       padding: 7px 10px;
     }
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+    .range-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+    .range-head label {
+      margin-bottom: 0;
+    }
+    .range-value {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
     input[type="file"] {
       width: 100%;
       border: 1px solid var(--line);
@@ -3353,6 +3441,13 @@ INDEX_HTML = r"""<!doctype html>
           <div class="voice-status" id="voiceStatus"></div>
         </div>
         <div>
+          <div class="range-head">
+            <label for="readRate">Read Speed</label>
+            <output class="range-value" id="readRateValue" for="readRate">180 WPM / 1.00x</output>
+          </div>
+          <input id="readRate" type="range" min="90" max="300" step="5" value="180">
+        </div>
+        <div>
           <div class="row">
             <div class="check-row">
               <input id="dictationEnabled" type="checkbox">
@@ -3438,6 +3533,8 @@ INDEX_HTML = r"""<!doctype html>
     const stopBtn = document.getElementById("stop");
     const voiceEl = document.getElementById("voice");
     const voiceStatusEl = document.getElementById("voiceStatus");
+    const readRateEl = document.getElementById("readRate");
+    const readRateValueEl = document.getElementById("readRateValue");
     const dictationEnabledEl = document.getElementById("dictationEnabled");
     const dictationStatusEl = document.getElementById("dictationStatus");
     const dictationMeterEl = document.getElementById("dictationMeter");
@@ -3508,6 +3605,7 @@ INDEX_HTML = r"""<!doctype html>
       state.data = data;
       statusEl.textContent = data.status || "Ready.";
       renderVoice(data.tts || {});
+      renderReadRate(data.settings || {});
       renderDictation(data.stt || {});
       renderSignalMap(data.metrics || {}, data.analysis || {});
       pauseBtn.disabled = !data.running && !data.paused;
@@ -3748,6 +3846,27 @@ INDEX_HTML = r"""<!doctype html>
       voiceStatusEl.textContent = `${tts.label || current} / ${umbra} / ${mac}`;
     }
 
+    function normalizeReadRate(value) {
+      const min = Number(readRateEl.min || 90);
+      const max = Number(readRateEl.max || 300);
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return 180;
+      return Math.max(min, Math.min(max, Math.round(parsed)));
+    }
+
+    function readRateLabel(rate) {
+      return `${rate} WPM / ${(rate / 180).toFixed(2)}x`;
+    }
+
+    function renderReadRate(settings) {
+      const rate = normalizeReadRate(settings.read_rate || settings.readRate || 180);
+      if (document.activeElement !== readRateEl) {
+        readRateEl.value = String(rate);
+      }
+      readRateValueEl.value = readRateLabel(normalizeReadRate(readRateEl.value));
+      readRateValueEl.textContent = readRateValueEl.value;
+    }
+
     function renderDictation(stt) {
       dictationEnabledEl.checked = !!stt.enabled;
       const service = stt.service || {};
@@ -3876,6 +3995,35 @@ INDEX_HTML = r"""<!doctype html>
         errorEl.textContent = error.message;
       }
     });
+
+    let readRateSaveTimer = null;
+    async function saveReadRate() {
+      if (readRateSaveTimer) {
+        window.clearTimeout(readRateSaveTimer);
+        readRateSaveTimer = null;
+      }
+      try {
+        errorEl.textContent = "";
+        renderReadRate({ read_rate: readRateEl.value });
+        render(await api("/api/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ read_rate: normalizeReadRate(readRateEl.value) })
+        }));
+      } catch (error) {
+        errorEl.textContent = error.message;
+      }
+    }
+
+    readRateEl.addEventListener("input", () => {
+      renderReadRate({ read_rate: readRateEl.value });
+      if (readRateSaveTimer) {
+        window.clearTimeout(readRateSaveTimer);
+      }
+      readRateSaveTimer = window.setTimeout(saveReadRate, 350);
+    });
+
+    readRateEl.addEventListener("change", saveReadRate);
 
     dictationEnabledEl.addEventListener("change", async () => {
       try {

@@ -73,6 +73,16 @@ DLL directory ahead of ctranslate2's bundled cuDNN DLL. This keeps the app on th
 strict 4090 Kokoro path while avoiding the Windows CUDA symbol crash that reset
 speech requests during Kokoro load.
 
+## 0.3.4
+
+`0.3.4` adds readiness-first startup orchestration and live read-speed control.
+`read-docs ensure` and `read-docs doctor` now check the local web app, private
+Tailscale Serve route, Umbra 4090 speech, and Mac Kokoro sidecar before Doc
+Reader reports the service ready. The web and native settings surfaces now share
+a Read Speed slider, pass the selected WPM into TTS backends, and update a live
+rate-control file so already-running readings pick up speed changes between
+short spoken segments.
+
 Before publishing:
 
 ```bash

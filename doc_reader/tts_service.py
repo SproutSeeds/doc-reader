@@ -27,6 +27,8 @@ WAV_MIME = "audio/wav"
 DEFAULT_CHATTERBOX_MAX_SEGMENT_CHARS = 260
 DEFAULT_KOKORO_MAX_SEGMENT_CHARS = 700
 DEFAULT_SEGMENT_PAUSE_SECONDS = 0.14
+MIN_TTS_SPEED = 0.5
+MAX_TTS_SPEED = 2.0
 URL_RE = re.compile(r"https?://\S+")
 MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
@@ -130,9 +132,17 @@ class EngineRegistry:
                 },
             }
 
-    def synthesize(self, *, engine: str, text: str, voice: str | None = None) -> SynthesisResult:
+    def synthesize(
+        self,
+        *,
+        engine: str,
+        text: str,
+        voice: str | None = None,
+        speed: float = 1.0,
+    ) -> SynthesisResult:
         normalized = _normalize_engine(engine)
         cleaned = _clean_text_for_tts(text)
+        normalized_speed = _normalize_speed(speed)
         if not cleaned:
             raise ValueError("No text to synthesize.")
         if normalized not in self.enabled_engines:
@@ -141,7 +151,7 @@ class EngineRegistry:
         if normalized == "chatterbox":
             return self._synthesize_chatterbox(cleaned, voice or DEFAULT_CHATTERBOX_VOICE)
         if normalized == "kokoro":
-            return self._synthesize_kokoro(cleaned, voice or DEFAULT_KOKORO_VOICE)
+            return self._synthesize_kokoro(cleaned, voice or DEFAULT_KOKORO_VOICE, speed=normalized_speed)
         raise ValueError(f"Unsupported engine: {normalized}")
 
     def transcribe(
@@ -206,13 +216,21 @@ class EngineRegistry:
             except OSError:
                 pass
 
-    def bench(self, *, engine: str, text: str, voice: str | None = None) -> dict[str, Any]:
-        result = self.synthesize(engine=engine, text=text, voice=voice)
+    def bench(
+        self,
+        *,
+        engine: str,
+        text: str,
+        voice: str | None = None,
+        speed: float = 1.0,
+    ) -> dict[str, Any]:
+        result = self.synthesize(engine=engine, text=text, voice=voice, speed=speed)
         chars = len(text)
         return {
             "ok": True,
             "engine": result.engine,
             "voice": result.voice,
+            "speed": _normalize_speed(speed),
             "sample_rate": result.sample_rate,
             "audio_seconds": result.audio_seconds,
             "generation_seconds": result.generation_seconds,
@@ -260,7 +278,7 @@ class EngineRegistry:
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(f"Chatterbox synthesis failed: {exc}") from exc
 
-    def _synthesize_kokoro(self, text: str, voice: str) -> SynthesisResult:
+    def _synthesize_kokoro(self, text: str, voice: str, *, speed: float = 1.0) -> SynthesisResult:
         started = time.perf_counter()
         pipeline = self._load_kokoro()
         try:
@@ -283,7 +301,7 @@ class EngineRegistry:
             ):
                 if segment_index > 0 and silence.size:
                     chunks.append(silence)
-                for _graphemes, _phonemes, audio in pipeline(segment, voice=voice):
+                for _graphemes, _phonemes, audio in pipeline(segment, voice=voice, speed=speed):
                     chunks.append(np.asarray(audio, dtype="float32"))
             if not chunks:
                 raise RuntimeError("Kokoro returned no audio.")
@@ -413,6 +431,7 @@ class TTSHandler(BaseHTTPRequestHandler):
                     engine=str(payload.get("engine") or "kokoro"),
                     voice=_optional_string(payload.get("voice")),
                     text=str(payload.get("text") or payload.get("input") or ""),
+                    speed=_normalize_speed(payload.get("speed", 1.0)),
                 )
                 self._send_audio(result)
                 return
@@ -422,6 +441,7 @@ class TTSHandler(BaseHTTPRequestHandler):
                     engine=str(payload.get("engine") or "kokoro"),
                     voice=_optional_string(payload.get("voice")),
                     text=str(payload.get("text") or payload.get("input") or ""),
+                    speed=_normalize_speed(payload.get("speed", 1.0)),
                 )
                 self._send_json(result)
                 return
@@ -731,6 +751,16 @@ def _normalize_engine(value: str) -> str:
         "local-kokoro": "kokoro",
     }
     return aliases.get(normalized, normalized)
+
+
+def _normalize_speed(value: object) -> float:
+    try:
+        parsed = float(str(value).strip())
+    except (TypeError, ValueError):
+        parsed = 1.0
+    if parsed != parsed:
+        parsed = 1.0
+    return max(MIN_TTS_SPEED, min(MAX_TTS_SPEED, parsed))
 
 
 def _optional_string(value: object) -> str | None:

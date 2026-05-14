@@ -13,6 +13,9 @@ from typing import Protocol
 
 
 class Speaker(Protocol):
+    def set_rate(self, rate: int) -> None:
+        ...
+
     def prefetch(self, text: str, key: int | None = None) -> None:
         ...
 
@@ -25,6 +28,9 @@ class Speaker(Protocol):
 
 @dataclass
 class ConsoleSpeaker:
+    def set_rate(self, rate: int) -> None:
+        return
+
     def prefetch(self, text: str, key: int | None = None) -> None:
         return
 
@@ -47,6 +53,9 @@ class MacSaySpeaker:
         self.rate = max(90, min(rate, 500))
         self.voice = self._resolve_voice(voice_hint)
         self._active: subprocess.Popen[str] | None = None
+
+    def set_rate(self, rate: int) -> None:
+        self.rate = max(90, min(int(rate), 500))
 
     def prefetch(self, text: str, key: int | None = None) -> None:
         return
@@ -106,9 +115,14 @@ class Pyttsx3Speaker:
             ) from exc
 
         self.engine = pyttsx3.init()
-        self.engine.setProperty("rate", rate)
+        self.rate = 0
+        self.set_rate(rate)
         if voice_hint:
             self._select_voice(voice_hint)
+
+    def set_rate(self, rate: int) -> None:
+        self.rate = max(90, min(int(rate), 500))
+        self.engine.setProperty("rate", self.rate)
 
     def prefetch(self, text: str, key: int | None = None) -> None:
         return
@@ -170,6 +184,7 @@ PLAYABLE_OPENAI_FORMATS = {"mp3", "opus", "aac", "flac", "wav"}
 DEFAULT_TTS_UMBRA_URL = "http://100.72.151.28:8771"
 DEFAULT_TTS_MAC_URL = "http://127.0.0.1:8772"
 DEFAULT_HTTP_TTS_TIMEOUT_SECONDS = 180.0
+DEFAULT_RATE = 180
 
 
 class OpenAITTSSpeaker:
@@ -181,6 +196,7 @@ class OpenAITTSSpeaker:
         model: str = OPENAI_TTS_MODEL,
         response_format: str = OPENAI_TTS_RESPONSE_FORMAT,
         instructions: str | None = OPENAI_TTS_INSTRUCTIONS,
+        rate: int = DEFAULT_RATE,
         request_timeout_seconds: float = 120.0,
     ) -> None:
         try:
@@ -229,6 +245,7 @@ class OpenAITTSSpeaker:
         self.model = resolved_model
         self.response_format = resolved_format
         self.instructions = (instructions or os.getenv("DOC_READER_OPENAI_INSTRUCTIONS") or "").strip()
+        self.speed = _speed_for_rate(rate)
         self.timeout = max(10.0, request_timeout_seconds)
         self._player = self._resolve_player()
         self._active: subprocess.Popen[bytes] | None = None
@@ -250,11 +267,24 @@ class OpenAITTSSpeaker:
 
         raise RuntimeError("No audio player found. Install ffplay or use macOS afplay.")
 
+    def set_rate(self, rate: int) -> None:
+        speed = _speed_for_rate(rate)
+        with self._prefetch_lock:
+            if speed == self.speed:
+                return
+            self.speed = speed
+            prefetched = list(self._prefetched_audio.values())
+            self._prefetched_audio.clear()
+        for future in prefetched:
+            future.cancel()
+
     def _synthesize_audio(self, text: str) -> bytes:
         if not text:
             return b""
 
         try:
+            with self._prefetch_lock:
+                speed = self.speed
             url = f"{self.base_url}/audio/speech"
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
@@ -265,6 +295,7 @@ class OpenAITTSSpeaker:
                 "voice": self.voice,
                 "input": text,
                 "response_format": self.response_format,
+                "speed": speed,
             }
             if self.instructions and self.model == "gpt-4o-mini-tts":
                 payload["instructions"] = self.instructions
@@ -355,6 +386,7 @@ class HttpTTSSpeaker:
         base_url: str,
         engine: str,
         voice: str | None = None,
+        rate: int = DEFAULT_RATE,
         request_timeout_seconds: float = DEFAULT_HTTP_TTS_TIMEOUT_SECONDS,
     ) -> None:
         try:
@@ -368,6 +400,7 @@ class HttpTTSSpeaker:
         self.base_url = base_url.rstrip("/")
         self.engine = engine
         self.voice = voice
+        self.speed = _speed_for_rate(rate)
         self.timeout = max(10.0, request_timeout_seconds)
         self._player = self._resolve_player()
         self._active: subprocess.Popen[bytes] | None = None
@@ -389,13 +422,27 @@ class HttpTTSSpeaker:
 
         raise RuntimeError("No audio player found. Install ffplay or use macOS afplay.")
 
+    def set_rate(self, rate: int) -> None:
+        speed = _speed_for_rate(rate)
+        with self._prefetch_lock:
+            if speed == self.speed:
+                return
+            self.speed = speed
+            prefetched = list(self._prefetched_audio.values())
+            self._prefetched_audio.clear()
+        for future in prefetched:
+            future.cancel()
+
     def _synthesize_audio(self, text: str) -> tuple[bytes, str]:
         if not text:
             return b"", "wav"
+        with self._prefetch_lock:
+            speed = self.speed
         payload: dict[str, object] = {
             "engine": self.engine,
             "text": text,
             "format": "wav",
+            "speed": speed,
         }
         if self.voice:
             payload["voice"] = self.voice
@@ -481,6 +528,14 @@ class FallbackSpeaker:
         self.fallback_name = fallback_name
         self._using_fallback = False
 
+    def set_rate(self, rate: int) -> None:
+        primary_setter = getattr(self.primary, "set_rate", None)
+        if callable(primary_setter):
+            primary_setter(rate)
+        fallback_setter = getattr(self.fallback, "set_rate", None)
+        if callable(fallback_setter):
+            fallback_setter(rate)
+
     def prefetch(self, text: str, key: int | None = None) -> None:
         if self._using_fallback:
             self.fallback.prefetch(text, key)
@@ -524,6 +579,14 @@ class FallbackChainSpeaker:
         self._index = 0
         self._lock = threading.RLock()
         self._prefetch_ready = False
+
+    def set_rate(self, rate: int) -> None:
+        with self._lock:
+            speakers = [speaker for _name, speaker in self._speakers]
+        for speaker in speakers:
+            setter = getattr(speaker, "set_rate", None)
+            if callable(setter):
+                setter(rate)
 
     def prefetch(self, text: str, key: int | None = None) -> None:
         if not self._prefetch_ready:
@@ -774,6 +837,7 @@ def build_speaker(
             voice=openai_voice,
             response_format=openai_response_format,
             instructions=openai_instructions,
+            rate=rate,
         )
 
     if normalized_backend == "macsay":
@@ -787,6 +851,7 @@ def build_speaker(
             base_url=http_tts_url or _env("DOC_READER_HTTP_TTS_URL", DEFAULT_TTS_MAC_URL),
             engine=http_tts_engine or _env("DOC_READER_HTTP_TTS_ENGINE", "kokoro"),
             voice=http_tts_voice or voice_hint,
+            rate=rate,
         )
 
     if normalized_backend == "tailscale-chatterbox":
@@ -794,6 +859,7 @@ def build_speaker(
             base_url=_env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL),
             engine="chatterbox",
             voice=http_tts_voice or voice_hint,
+            rate=rate,
         )
 
     if normalized_backend in {"tailscale-4090", "tailscale-kokoro"}:
@@ -801,6 +867,7 @@ def build_speaker(
             base_url=_env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL),
             engine="kokoro",
             voice=http_tts_voice or voice_hint,
+            rate=rate,
         )
 
     if normalized_backend == "local-kokoro":
@@ -808,11 +875,12 @@ def build_speaker(
             base_url=_env("DOC_READER_TTS_MAC_URL", DEFAULT_TTS_MAC_URL),
             engine="kokoro",
             voice=http_tts_voice or voice_hint,
+            rate=rate,
         )
 
     # Auto mode: keep API spend opt-in and prefer stable private local/Tailnet engines.
     chain: list[tuple[str, Speaker]] = []
-    for name, speaker in _auto_http_speakers(voice_hint=http_tts_voice or voice_hint):
+    for name, speaker in _auto_http_speakers(voice_hint=http_tts_voice or voice_hint, rate=rate):
         chain.append((name, speaker))
 
     if sys.platform == "darwin":
@@ -839,6 +907,7 @@ def build_speaker(
                             voice=openai_voice,
                             response_format=openai_response_format,
                             instructions=openai_instructions,
+                            rate=rate,
                         ),
                     )
                 )
@@ -851,7 +920,7 @@ def build_speaker(
     raise RuntimeError("No speech backend available. " + " | ".join(errors))
 
 
-def _auto_http_speakers(*, voice_hint: str | None) -> list[tuple[str, Speaker]]:
+def _auto_http_speakers(*, voice_hint: str | None, rate: int) -> list[tuple[str, Speaker]]:
     return [
         (
             "4090 Kokoro",
@@ -859,6 +928,7 @@ def _auto_http_speakers(*, voice_hint: str | None) -> list[tuple[str, Speaker]]:
                 base_url=_env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL),
                 engine="kokoro",
                 voice=voice_hint,
+                rate=rate,
             ),
         ),
         (
@@ -867,6 +937,7 @@ def _auto_http_speakers(*, voice_hint: str | None) -> list[tuple[str, Speaker]]:
                 base_url=_env("DOC_READER_TTS_MAC_URL", DEFAULT_TTS_MAC_URL),
                 engine="kokoro",
                 voice=voice_hint,
+                rate=rate,
             ),
         ),
         (
@@ -875,9 +946,20 @@ def _auto_http_speakers(*, voice_hint: str | None) -> list[tuple[str, Speaker]]:
                 base_url=_env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL),
                 engine="chatterbox",
                 voice=voice_hint,
+                rate=rate,
             ),
         ),
     ]
+
+
+def _speed_for_rate(rate: int) -> float:
+    try:
+        parsed = float(rate)
+    except (TypeError, ValueError):
+        parsed = DEFAULT_RATE
+    if parsed != parsed:
+        parsed = DEFAULT_RATE
+    return round(max(0.5, min(2.0, parsed / DEFAULT_RATE)), 3)
 
 
 def _env(name: str, default: str) -> str:

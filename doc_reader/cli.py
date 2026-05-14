@@ -39,6 +39,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--rate", type=int, default=180, help="Speech rate in words per minute")
     parser.add_argument(
+        "--rate-control-file",
+        type=Path,
+        default=None,
+        help="Optional JSON or text file checked between chunks for live speech rate changes",
+    )
+    parser.add_argument(
         "--voice",
         default=None,
         help="Optional voice substring to select a specific local TTS voice",
@@ -117,6 +123,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Word budget for subsequent chunks",
     )
     parser.add_argument(
+        "--speech-segment-words",
+        type=int,
+        default=32,
+        help="Small spoken segment target so live speed changes apply quickly",
+    )
+    parser.add_argument(
         "--queue-size",
         type=int,
         default=8,
@@ -166,10 +178,12 @@ def main() -> int:
         mode=args.mode,
         style=args.style,
         speech_rate=args.rate,
+        rate_control_path=args.rate_control_file.expanduser() if args.rate_control_file else None,
         voice_hint=args.voice,
         queue_size=args.queue_size,
         first_chunk_words=args.first_chunk_words,
         chunk_words=args.chunk_words,
+        speech_segment_words=args.speech_segment_words,
         max_chunks=args.max_chunks,
         start_chunk_index=max(0, int(args.start_chunk_index)),
         start_seconds=max(0.0, float(args.start_seconds)),

@@ -65,6 +65,9 @@ private enum KeychainStore {
 private struct ReaderPreferences {
     private static let defaults = UserDefaults.standard
     private static let legacyDefaults = UserDefaults(suiteName: "com.DocReader.DocReader")
+    static let defaultSpeechRate = 180
+    static let minSpeechRate = 90
+    static let maxSpeechRate = 300
     static let openAIModels = ["gpt-4o-mini-tts", "tts-1", "tts-1-hd"]
     static let openAIVoices = [
         "marin",
@@ -98,6 +101,49 @@ private struct ReaderPreferences {
     static var mode: String {
         let value = defaults.string(forKey: "reader.mode") ?? "full"
         return ["smart", "full"].contains(value) ? value : "full"
+    }
+
+    static var speechRate: Int {
+        let stored = defaults.object(forKey: "speech.rate") as? Int
+        return normalizedSpeechRate(stored ?? defaultSpeechRate)
+    }
+
+    static func normalizedSpeechRate(_ value: Int) -> Int {
+        max(minSpeechRate, min(maxSpeechRate, value))
+    }
+
+    static func rateLabel(_ value: Int) -> String {
+        let rate = normalizedSpeechRate(value)
+        let speed = Double(rate) / Double(defaultSpeechRate)
+        return "\(rate) WPM / \(String(format: "%.2fx", speed))"
+    }
+
+    static var rateControlURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".doc-reader-managed")
+            .appendingPathComponent("read-rate-control.json")
+    }
+
+    static func writeRateControlFile(rate: Int = speechRate) {
+        let readRate = normalizedSpeechRate(rate)
+        let speed = max(0.5, min(2.0, Double(readRate) / Double(defaultSpeechRate)))
+        let payload: [String: Any] = [
+            "read_rate": readRate,
+            "readRate": readRate,
+            "read_speed": round(speed * 1000) / 1000,
+            "readSpeed": round(speed * 1000) / 1000,
+            "updated_at": Date().timeIntervalSince1970,
+        ]
+        do {
+            try FileManager.default.createDirectory(
+                at: rateControlURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted])
+            try data.write(to: rateControlURL, options: [.atomic])
+        } catch {
+            return
+        }
     }
 
     static var speechBackend: String {
@@ -181,6 +227,7 @@ private struct ReaderPreferences {
 
     static func save(
         mode: String,
+        speechRate: Int,
         backend: String,
         model: String,
         voice: String,
@@ -188,11 +235,14 @@ private struct ReaderPreferences {
         apiKey: String
     ) {
         defaults.set(mode, forKey: "reader.mode")
+        let rate = normalizedSpeechRate(speechRate)
+        defaults.set(rate, forKey: "speech.rate")
         defaults.set(backend, forKey: "speech.backend")
         defaults.set(openAIModels.contains(model) ? model : "gpt-4o-mini-tts", forKey: "openai.model")
         defaults.set(openAIVoices.contains(voice) ? voice : "marin", forKey: "openai.voice")
         defaults.set(instructions, forKey: "openai.instructions")
         KeychainStore.setPassword(apiKey, account: KeychainStore.openAIAccount)
+        writeRateControlFile(rate: rate)
     }
 
     static func migrateLegacySettingsIfNeeded() {
@@ -538,6 +588,7 @@ private final class ReaderEngine: NSObject {
         let savedSeconds = max(0, currentItem.lastSeconds)
         let startSecondsArgument = resumeFromChunk > 0 ? 0 : max(0, savedSeconds - 20)
         let displayStartSeconds = resumeFromChunk > 0 ? savedSeconds : startSecondsArgument
+        ReaderPreferences.writeRateControlFile()
 
         var args = [
             "-m",
@@ -548,7 +599,9 @@ private final class ReaderEngine: NSObject {
             "--style",
             "balanced",
             "--rate",
-            "180",
+            "\(ReaderPreferences.speechRate)",
+            "--rate-control-file",
+            ReaderPreferences.rateControlURL.path,
             "--speech-backend",
             backend,
             "--start-chunk-index",
@@ -1155,6 +1208,8 @@ private final class ReaderWindowController: NSWindowController {
 
 private final class PreferencesWindowController: NSWindowController {
     private let modePopup = NSPopUpButton()
+    private let rateSlider = NSSlider()
+    private let rateValueLabel = NSTextField(labelWithString: "")
     private let backendPopup = NSPopUpButton()
     private let modelPopup = NSPopUpButton()
     private let apiKeyField = NSSecureTextField()
@@ -1164,7 +1219,7 @@ private final class PreferencesWindowController: NSWindowController {
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 330),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 370),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -1192,6 +1247,10 @@ private final class PreferencesWindowController: NSWindowController {
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         modePopup.addItems(withTitles: ["Full Reading", "Smart Summary"])
+        rateSlider.minValue = Double(ReaderPreferences.minSpeechRate)
+        rateSlider.maxValue = Double(ReaderPreferences.maxSpeechRate)
+        rateSlider.target = self
+        rateSlider.action = #selector(rateSliderChanged)
         backendPopup.addItems(withTitles: ReaderPreferences.speechBackendOptions.map(\.title))
         modelPopup.addItems(withTitles: ReaderPreferences.openAIModels)
         voicePopup.addItems(withTitles: ReaderPreferences.openAIVoices)
@@ -1201,6 +1260,7 @@ private final class PreferencesWindowController: NSWindowController {
         let saveButton = NSButton(title: "Save", target: self, action: #selector(savePreferences))
 
         stack.addArrangedSubview(row(label: "Mode", control: modePopup))
+        stack.addArrangedSubview(rateRow())
         stack.addArrangedSubview(row(label: "Speech", control: backendPopup))
         stack.addArrangedSubview(row(label: "Model", control: modelPopup))
         stack.addArrangedSubview(row(label: "API Key", control: apiKeyField))
@@ -1235,8 +1295,24 @@ private final class PreferencesWindowController: NSWindowController {
         return stack
     }
 
+    private func rateRow() -> NSStackView {
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.spacing = 12
+        let text = NSTextField(labelWithString: "Speed")
+        text.widthAnchor.constraint(equalToConstant: 80).isActive = true
+        rateSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
+        rateValueLabel.widthAnchor.constraint(equalToConstant: 96).isActive = true
+        stack.addArrangedSubview(text)
+        stack.addArrangedSubview(rateSlider)
+        stack.addArrangedSubview(rateValueLabel)
+        return stack
+    }
+
     private func loadStoredValues() {
         modePopup.selectItem(at: ReaderPreferences.mode == "smart" ? 1 : 0)
+        rateSlider.doubleValue = Double(ReaderPreferences.speechRate)
+        updateRateValueLabel()
         let backendIndex = ReaderPreferences.speechBackendOptions.firstIndex {
             $0.value == ReaderPreferences.speechBackend
         } ?? 0
@@ -1246,6 +1322,18 @@ private final class PreferencesWindowController: NSWindowController {
         apiKeyField.stringValue = ReaderPreferences.appOpenAIAPIKey
         instructionsField.stringValue = ReaderPreferences.openAIInstructions
         statusLabel.stringValue = ReaderPreferences.openAIKeyStatus
+    }
+
+    @objc private func rateSliderChanged() {
+        let rate = ReaderPreferences.normalizedSpeechRate(Int(rateSlider.doubleValue.rounded()))
+        rateSlider.doubleValue = Double(rate)
+        ReaderPreferences.writeRateControlFile(rate: rate)
+        updateRateValueLabel()
+    }
+
+    private func updateRateValueLabel() {
+        let rate = ReaderPreferences.normalizedSpeechRate(Int(rateSlider.doubleValue.rounded()))
+        rateValueLabel.stringValue = ReaderPreferences.rateLabel(rate)
     }
 
     func show() {
@@ -1265,6 +1353,7 @@ private final class PreferencesWindowController: NSWindowController {
         let voice = voicePopup.selectedItem?.title ?? "marin"
         ReaderPreferences.save(
             mode: mode,
+            speechRate: Int(rateSlider.doubleValue.rounded()),
             backend: backend,
             model: model,
             voice: voice,
@@ -1531,12 +1620,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         .appendingPathComponent(".doc-reader-managed", isDirectory: true)
     private let webBaseURL = URL(string: "http://127.0.0.1:8766")!
     private let webLaunchAgentLabel = "com.docreader.web"
+    private let ttsLaunchAgentLabel = "com.docreader.tts-local"
+    private let umbraTtsHealthURL = URL(string: "http://100.72.151.28:8771/healthz")!
+    private let umbraSSHHost = "Umbra"
+    private let umbraTtsRootWindowsPath = "C:\\Users\\codyr\\.doc-reader-tts"
     private var statusItem: NSStatusItem?
     private let statusMenuItem = NSMenuItem(title: "Ready.", action: nil, keyEquivalent: "")
     private let pauseMenuItem = NSMenuItem(title: "Pause Web Reading", action: #selector(togglePause), keyEquivalent: "")
     private let stopMenuItem = NSMenuItem(title: "Stop Web Reading", action: #selector(stopReading), keyEquivalent: "")
     private var statusTimer: Timer?
     private var fallbackWebProcess: Process?
+    private var startupOrchestrationInProgress = false
     private var globalFlagsMonitor: Any?
     private var localFlagsMonitor: Any?
     private var globalKeyMonitor: Any?
@@ -1598,6 +1692,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         installDictationHotkeyMonitor()
         installSelectedTextReadbackMonitor()
         ensureWebAppRunning()
+        ensureStartupOrchestration()
         statusTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
             self?.enforceDictationRecordingSafetyLimits()
             self?.refreshWebState()
@@ -2717,6 +2812,115 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         recordingWindow?.orderOut(nil)
     }
 
+    private func ensureStartupOrchestration() {
+        if startupOrchestrationInProgress {
+            return
+        }
+        startupOrchestrationInProgress = true
+        statusMenuItem.title = "Checking DocReader startup..."
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else {
+                return
+            }
+            let cliExitCode = self.runReadDocsEnsure()
+            if cliExitCode != 0 {
+                self.ensureFallbackStartupDependencies()
+            }
+
+            DispatchQueue.main.async {
+                self.startupOrchestrationInProgress = false
+                self.refreshWebState()
+            }
+        }
+    }
+
+    private func runReadDocsEnsure() -> Int32 {
+        guard let readDocsURL = readDocsCommandURL() else {
+            return 1
+        }
+        return runProcess(
+            readDocsURL.path,
+            ["ensure"],
+            environment: startupOrchestrationEnvironment(),
+            currentDirectory: managedRoot
+        )
+    }
+
+    private func readDocsCommandURL() -> URL? {
+        let environment = ProcessInfo.processInfo.environment
+        var candidates: [String] = []
+        if let override = environment["DOC_READER_READ_DOCS_BIN"],
+           !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            candidates.append(override)
+        }
+        candidates.append(managedRoot.appendingPathComponent("read-docs").path)
+        candidates.append("/opt/homebrew/bin/read-docs")
+        candidates.append("/usr/local/bin/read-docs")
+
+        return candidates
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+            .map { URL(fileURLWithPath: $0) }
+    }
+
+    private func startupOrchestrationEnvironment() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        let defaultPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        if let currentPath = environment["PATH"], !currentPath.isEmpty {
+            environment["PATH"] = "\(defaultPath):\(currentPath)"
+        } else {
+            environment["PATH"] = defaultPath
+        }
+        environment["DOC_READER_MANAGED_ROOT"] = managedRoot.path
+        environment["DOC_READER_VENV_DIR"] = managedRoot.appendingPathComponent(".venv", isDirectory: true).path
+        environment["DOC_READER_TTS_UMBRA_URL"] = "http://100.72.151.28:8771"
+        environment["DOC_READER_TTS_MAC_URL"] = "http://127.0.0.1:8772"
+        return environment
+    }
+
+    private func ensureFallbackStartupDependencies() {
+        kickstartMacTtsLaunchAgent()
+        ensureUmbraTtsRunning()
+    }
+
+    private func ensureUmbraTtsRunning() {
+        if isHealthEndpointReady(umbraTtsHealthURL, timeoutInterval: 1.0) {
+            return
+        }
+        setStatusMenuTitle("Starting Umbra 4090 speech...")
+        let environment = startupOrchestrationEnvironment()
+        let stopCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"\(umbraTtsRootWindowsPath)\\stop-tts.ps1\""
+        _ = runProcess(
+            "/usr/bin/ssh",
+            [umbraSSHHost, "cmd", "/c", stopCommand],
+            environment: environment,
+            currentDirectory: managedRoot
+        )
+        _ = runProcess(
+            "/usr/bin/ssh",
+            [umbraSSHHost, "cmd", "/c", "schtasks /Run /TN DocReaderTTS"],
+            environment: environment,
+            currentDirectory: managedRoot
+        )
+        _ = waitForHealth(umbraTtsHealthURL, attempts: 60, interval: 0.5)
+    }
+
+    private func waitForHealth(_ url: URL, attempts: Int, interval: TimeInterval) -> Bool {
+        for _ in 0..<attempts {
+            if isHealthEndpointReady(url, timeoutInterval: 1.5) {
+                return true
+            }
+            Thread.sleep(forTimeInterval: interval)
+        }
+        return false
+    }
+
+    private func setStatusMenuTitle(_ title: String) {
+        DispatchQueue.main.async { [weak self] in
+            self?.statusMenuItem.title = title
+        }
+    }
+
     private func ensureWebAppRunning(completion: (() -> Void)? = nil) {
         if isWebHealthy() {
             refreshWebState(completion: completion)
@@ -2759,9 +2963,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func isWebHealthy() -> Bool {
-        var request = URLRequest(url: webURL(path: "/healthz"))
-        request.timeoutInterval = 0.75
+        isHealthEndpointReady(webURL(path: "/healthz"), timeoutInterval: 0.75)
+    }
 
+    private func isHealthEndpointReady(_ url: URL, timeoutInterval: TimeInterval) -> Bool {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeoutInterval
         let semaphore = DispatchSemaphore(value: 0)
         var healthy = false
         URLSession.shared.dataTask(with: request) { data, response, _ in
@@ -2773,7 +2980,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             healthy = payload?["ok"] as? Bool == true
         }.resume()
 
-        _ = semaphore.wait(timeout: .now() + 1.0)
+        _ = semaphore.wait(timeout: .now() + timeoutInterval + 0.25)
         return healthy
     }
 
@@ -2861,10 +3068,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func kickstartWebLaunchAgent() {
+        kickstartLaunchAgent(label: webLaunchAgentLabel)
+    }
+
+    private func kickstartMacTtsLaunchAgent() {
+        kickstartLaunchAgent(label: ttsLaunchAgentLabel)
+    }
+
+    private func kickstartLaunchAgent(label: String) {
         let domain = "gui/\(getuid())"
-        let target = "\(domain)/\(webLaunchAgentLabel)"
+        let target = "\(domain)/\(label)"
         let plistURL = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("Library/LaunchAgents/\(webLaunchAgentLabel).plist")
+            .appendingPathComponent("Library/LaunchAgents/\(label).plist")
 
         if runProcess("/bin/launchctl", ["print", target]) != 0,
            FileManager.default.fileExists(atPath: plistURL.path) {
@@ -2909,10 +3124,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @discardableResult
-    private func runProcess(_ executable: String, _ arguments: [String]) -> Int32 {
+    private func runProcess(
+        _ executable: String,
+        _ arguments: [String],
+        environment: [String: String]? = nil,
+        currentDirectory: URL? = nil
+    ) -> Int32 {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
+        process.environment = environment
+        process.currentDirectoryURL = currentDirectory
         process.standardOutput = nil
         process.standardError = nil
         do {

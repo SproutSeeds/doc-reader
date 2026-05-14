@@ -9,6 +9,7 @@ LOG_DIR="$HOME/Library/Logs"
 APP_DIR="$HOME/.doc-reader-managed"
 RUNNER="$APP_DIR/run-doc-reader"
 VENV_DIR="$APP_DIR/.venv"
+READ_DOCS_HELPER="$APP_DIR/read-docs"
 NATIVE_APP="$APP_DIR/Doc Reader.app"
 NATIVE_EXECUTABLE="$NATIVE_APP/Contents/MacOS/DocReader"
 APPLICATIONS_DIR="$HOME/Applications"
@@ -33,11 +34,24 @@ if [[ ! -x "$SCRIPT_DIR/build-macos-app" ]]; then
   echo "[doc-reader] $SCRIPT_DIR/build-macos-app is missing or not executable." >&2
   exit 1
 fi
+NODE_BIN="${NODE_BIN:-$(command -v node || true)}"
+if [[ -z "$NODE_BIN" ]]; then
+  echo "[doc-reader] node is required for startup orchestration." >&2
+  exit 1
+fi
 
 # Install a managed app copy outside the npm package so launchd owns runtime lifecycle.
 mkdir -p "$APP_DIR"
 cp "$SCRIPT_DIR/run-doc-reader" "$APP_DIR/run-doc-reader"
 chmod +x "$APP_DIR/run-doc-reader"
+cat > "$READ_DOCS_HELPER" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+export DOC_READER_VENV_DIR="\${DOC_READER_VENV_DIR:-$VENV_DIR}"
+export DOC_READER_MANAGED_ROOT="\${DOC_READER_MANAGED_ROOT:-$APP_DIR}"
+exec "$NODE_BIN" "$SCRIPT_DIR/bin/read-docs.js" "\$@"
+EOF
+chmod +x "$READ_DOCS_HELPER"
 cp "$SCRIPT_DIR/read-selection-service.sh" "$APP_DIR/read-selection-service.sh"
 chmod +x "$APP_DIR/read-selection-service.sh"
 cp "$SCRIPT_DIR/requirements.txt" "$APP_DIR/requirements.txt"

@@ -1,0 +1,34 @@
+{
+  "appName": "doc-reader",
+  "host": "127.0.0.1",
+  "port": 8766,
+  "httpsPort": 8766,
+  "healthPath": "/healthz",
+  "officialUrl": "https://codys-mac-studio-1.tail649edd.ts.net:8766/",
+  "requireOfficialHealth": false,
+  "requireDeviceServe": true,
+  "autoServe": true,
+  "allowFunnel": false,
+  "dependencies": [
+    {
+      "name": "umbra-4090-speech",
+      "healthUrl": "http://100.72.151.28:8771/healthz",
+      "required": true,
+      "autoStart": true,
+      "startCommand": ["read-docs", "tts-umbra-start"],
+      "feature": "strict 4090 text-to-speech and Whisper dictation",
+      "timeoutMs": 30000
+    },
+    {
+      "name": "mac-kokoro",
+      "healthUrl": "http://127.0.0.1:8772/healthz",
+      "required": false,
+      "autoStart": true,
+      "startCommand": ["read-docs", "tts-mac-start"],
+      "feature": "Mac-local TTS fallback",
+      "timeoutMs": 45000
+    }
+  ],
+  "startupTimeoutMs": 30000,
+  "timeoutMs": 6000
+}

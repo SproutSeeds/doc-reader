@@ -69,8 +69,18 @@ read-docs dock
 read-docs stop
 read-docs restart
 read-docs status
+read-docs doctor
+read-docs ensure
 read-docs uninstall
 ```
+
+Startup runs a tailnet orchestration pass: the web app is started, private
+Tailscale Serve is checked or configured, local Mac Kokoro starts when needed,
+and the Umbra 4090 speech service is started before Doc Reader reports full
+readiness. Use `read-docs ensure` to run that pass directly, or
+`read-docs doctor --json` to inspect readiness without starting dependencies.
+Opening `Doc Reader.app` runs the same readiness pass after the local web app is
+reachable, so closing and reopening the app also repairs stopped speech helpers.
 
 The installer also creates `~/Applications/Doc Reader.app` with the native app
 icon and registers it with Launch Services. You can launch it from Applications,
@@ -173,6 +183,10 @@ The web app keeps read-aloud cards, dictation cards, and external app readings
 in one Library. Filter buttons narrow the Library to Readings, Dictations, or
 Clawdad-origin items. Dictation cards have a copy icon button; clicking it
 copies the full text and briefly switches the button to a green checkmark.
+The Read Speed slider stores a per-app WPM setting and applies it to new
+read-aloud playback plus already-running readings as each next chunk is
+prepared. Playback is spoken in short live segments so speed changes are picked
+up after the current segment, including on the default strict 4090 Kokoro path.
 Library retention is unbounded: read-aloud cards, prepared TTS audio metadata,
 STT dictation cards, and saved dictation recording files are retained until you
 remove them from the managed app data.
