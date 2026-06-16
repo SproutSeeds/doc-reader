@@ -28,6 +28,8 @@ const ttsMacPort = Number(process.env.DOC_READER_TTS_MAC_PORT || 8772);
 const ttsMacHost = process.env.DOC_READER_TTS_MAC_HOST || "127.0.0.1";
 const ttsMacUrl = process.env.DOC_READER_TTS_MAC_URL || `http://${ttsMacHost}:${ttsMacPort}`;
 const ttsMacDevice = process.env.DOC_READER_TTS_MAC_DEVICE || "cpu";
+const ttsMacSttModel = process.env.DOC_READER_MAC_STT_MODEL || process.env.DOC_READER_STT_MODEL || "base";
+const ttsMacSttComputeType = process.env.DOC_READER_MAC_STT_COMPUTE_TYPE || process.env.DOC_READER_STT_COMPUTE_TYPE || "int8";
 const ttsUmbraUrl = process.env.DOC_READER_TTS_UMBRA_URL || "http://100.72.151.28:8771";
 const ttsUmbraHost = process.env.DOC_READER_UMBRA_SSH_HOST || "Umbra";
 const ttsUmbraRoot = process.env.DOC_READER_UMBRA_TTS_ROOT || "C:/Users/codyr/.doc-reader-tts";
@@ -695,7 +697,7 @@ function writeTtsLaunchAgent() {
       <string>--port</string>
       <string>${ttsMacPort}</string>
       <string>--engines</string>
-      <string>kokoro</string>
+      <string>kokoro,whisper</string>
       <string>--device</string>
       <string>${ttsMacDevice}</string>
     </array>
@@ -726,6 +728,12 @@ function writeTtsLaunchAgent() {
       <string>${ttsMacUrl}</string>
       <key>DOC_READER_TTS_DEVICE</key>
       <string>${ttsMacDevice}</string>
+      <key>DOC_READER_STT_MODEL</key>
+      <string>${ttsMacSttModel}</string>
+      <key>DOC_READER_STT_COMPUTE_TYPE</key>
+      <string>${ttsMacSttComputeType}</string>
+      <key>DOC_READER_STT_PRELOAD</key>
+      <string>0</string>
     </dict>
   </dict>
 </plist>
@@ -763,6 +771,7 @@ async function ensureMacTtsRuntime() {
     "--python",
     ttsLocalPython,
     "kokoro",
+    "faster-whisper",
     "soundfile",
     "torch",
     "torchvision",

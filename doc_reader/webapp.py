@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -40,6 +41,18 @@ from .speech import (
 )
 
 SUPPORTED_SUFFIXES = {".pdf", ".docx", ".txt", ".md", ".markdown"}
+SUPPORTED_AUDIO_SUFFIXES = {
+    ".aac",
+    ".aif",
+    ".aiff",
+    ".flac",
+    ".m4a",
+    ".mp3",
+    ".mp4",
+    ".ogg",
+    ".wav",
+    ".webm",
+}
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8766
 DEFAULT_RATE = 180
@@ -56,6 +69,7 @@ DEFAULT_ANALYSIS_MODEL = "llama3.1:8b"
 CHUNK_START_RE = re.compile(r"^\[doc-reader\]\s+chunk-start\s+index=(\d+)\s*$")
 CHUNK_DONE_RE = re.compile(r"^\[doc-reader\]\s+chunk-done\s+index=(\d+)\s*$")
 WORD_RE = re.compile(r"[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?")
+TIMESTAMP_LINE_PREFIX_RE = re.compile(r"^\s*\[[0-9:.]+\s*-\s*[0-9:.]+\]\s*")
 NATIVE_HELPER_LABEL = "com.docreader.tray"
 NATIVE_HELPER_STALE_SECONDS = 8.0
 DEFAULT_MICROPHONE_MATCH = "logi,logitech"
@@ -731,6 +745,7 @@ class ReaderService:
         if not plist.exists():
             raise FileNotFoundError("Doc Reader LaunchAgent is not installed.")
 
+        self._clear_native_helper_runtime_status("native helper starting from web app")
         if not _launch_agent_loaded(target):
             subprocess.run(
                 ["/bin/launchctl", "bootstrap", domain, str(plist)],
@@ -744,19 +759,92 @@ class ReaderService:
             stderr=subprocess.DEVNULL,
             check=False,
         )
-        result = subprocess.run(
-            ["/bin/launchctl", "kickstart", "-k", target],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            message = (result.stderr or "Could not start Doc Reader app helper.").strip()
+        kickstart_code, kickstart_error = _kickstart_launch_agent(target)
+        if kickstart_code != 0:
+            message = kickstart_error or "Could not start Doc Reader app helper."
             raise RuntimeError(message)
         with self._lock:
-            self._status = "Doc Reader app helper started."
-        return self.state()
+            self._status = "Doc Reader app helper start requested."
+            status = self._status
+        return {"ok": True, "status": status}
+
+    def reset_native_helper(self) -> dict[str, Any]:
+        if sys.platform != "darwin":
+            raise RuntimeError("The native helper is only available on macOS.")
+        uid = os.getuid()
+        domain = f"gui/{uid}"
+        target = f"{domain}/{NATIVE_HELPER_LABEL}"
+        plist = Path.home() / "Library" / "LaunchAgents" / f"{NATIVE_HELPER_LABEL}.plist"
+        if not plist.exists():
+            raise FileNotFoundError("Doc Reader LaunchAgent is not installed.")
+
+        self._clear_native_helper_runtime_status("native helper reset requested")
+        if _launch_agent_loaded(target):
+            result = subprocess.run(
+                ["/bin/launchctl", "bootout", target],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0 and _launch_agent_loaded(target):
+                message = (result.stderr or "Could not reset Doc Reader app helper.").strip()
+                raise RuntimeError(message)
+        _terminate_native_helper_processes()
+        subprocess.run(
+            ["/bin/launchctl", "bootstrap", domain, str(plist)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        subprocess.run(
+            ["/bin/launchctl", "enable", target],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        kickstart_code, kickstart_error = _kickstart_launch_agent(target)
+        if kickstart_code != 0:
+            message = kickstart_error or "Could not restart Doc Reader app helper."
+            raise RuntimeError(message)
+        with self._lock:
+            self._status = "Doc Reader app helper reset requested."
+            status = self._status
+        return {"ok": True, "status": status}
+
+    def stop_native_helper(self) -> dict[str, Any]:
+        if sys.platform != "darwin":
+            raise RuntimeError("The native helper is only available on macOS.")
+        uid = os.getuid()
+        target = f"gui/{uid}/{NATIVE_HELPER_LABEL}"
+        if _launch_agent_loaded(target):
+            result = subprocess.run(
+                ["/bin/launchctl", "bootout", target],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0 and _launch_agent_loaded(target):
+                message = (result.stderr or "Could not stop Doc Reader app helper.").strip()
+                raise RuntimeError(message)
+        _terminate_native_helper_processes()
+        self._clear_native_helper_runtime_status("native helper stopped from web app")
+        with self._lock:
+            self._status = "Doc Reader app helper stopped."
+            status = self._status
+        return {"ok": True, "status": status}
+
+    def _clear_native_helper_runtime_status(self, event: str) -> None:
+        settings = self._settings()
+        settings["native_dictation_status_at"] = 0
+        settings["active_microphone_id"] = ""
+        settings["recording"] = False
+        settings["recording_start_pending"] = False
+        settings["audio_level"] = 0
+        settings["audio_peak_level"] = 0
+        settings["last_dictation_event"] = event
+        self._save_settings(settings)
 
     def update_native_dictation_status(self, payload: dict[str, Any]) -> dict[str, Any]:
         settings = self._settings()
@@ -793,6 +881,10 @@ class ReaderService:
                 settings[key] = payload.get(key)
         settings["native_dictation_status_at"] = time.time()
         self._save_settings(settings)
+        if str(payload.get("last_dictation_event") or "") == "native helper started":
+            with self._lock:
+                if self._status == "Doc Reader app helper start requested.":
+                    self._status = "Doc Reader app helper started."
         return {"ok": True, "stt": self.stt_status()}
 
     def tts_status(self) -> dict[str, Any]:
@@ -811,21 +903,59 @@ class ReaderService:
         }
 
     def stt_status(self) -> dict[str, Any]:
-        service = _service_health(_env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL))
+        stt_backend, service = _stt_service_health()
         engines = service.get("engines", {}) if isinstance(service, dict) else {}
         whisper = engines.get("whisper", {}) if isinstance(engines, dict) else {}
         settings = self._settings()
         return {
             "enabled": self._stt_enabled(),
             "hotkey": "Option",
-            "backend": "tailscale-4090-whisper",
-            "label": "4090 Whisper",
+            "backend": stt_backend,
+            "label": _stt_service_label(stt_backend),
             "service": service,
             "microphone": _microphone_payload(settings),
             "ready": bool(service.get("ok")) and bool(whisper.get("enabled")),
             "loaded": bool(whisper.get("loaded")),
             "error": whisper.get("error", "") if isinstance(whisper, dict) else "",
         }
+
+    def transcribe_audio_file(
+        self,
+        filename: str,
+        audio: bytes,
+        *,
+        content_type: str = "",
+        language: str | None = None,
+        timestamped: bool = False,
+    ) -> dict[str, Any]:
+        safe_name = _safe_filename(filename or "audio.wav")
+        suffix = Path(safe_name).suffix.lower()
+        normalized_content_type = _audio_upload_content_type(safe_name, content_type)
+        if suffix not in SUPPORTED_AUDIO_SUFFIXES and not _is_audio_content_type(normalized_content_type):
+            raise ValueError("Unsupported audio file type.")
+        if not audio:
+            raise ValueError("Uploaded audio file was empty.")
+
+        audio_hash = hashlib.sha256(audio).hexdigest()
+        timestamp_mode = "phrase" if timestamped else "plain"
+        return self.transcribe_audio(
+            audio,
+            content_type=normalized_content_type,
+            language=language,
+            source="audio-upload",
+            source_item_id=f"audio-upload:{audio_hash}:{timestamp_mode}",
+            source_meta={
+                "filename": safe_name,
+                "contentType": normalized_content_type,
+                "bytes": len(audio),
+                "timestamped": bool(timestamped),
+                "timestampMode": timestamp_mode,
+            },
+            title=f"Audio: {safe_name}",
+            label="Audio",
+            status_label="Audio",
+            timestamped=timestamped,
+        )
 
     def transcribe_audio(
         self,
@@ -837,9 +967,13 @@ class ReaderService:
         source: str | None = None,
         source_item_id: str | None = None,
         source_meta: dict[str, Any] | None = None,
+        title: str | None = None,
+        label: str = "Dictation",
+        status_label: str = "Dictation",
+        timestamped: bool = False,
     ) -> dict[str, Any]:
         if not self._stt_enabled():
-            raise PermissionError("Dictation hotkey is disabled.")
+            raise PermissionError("Speech-to-text is disabled.")
         if not audio:
             raise ValueError("No audio to transcribe.")
 
@@ -857,46 +991,65 @@ class ReaderService:
             normalization["source_bytes"] = source_bytes
             normalization["normalized_bytes"] = len(normalized_audio)
         transcribe_started = time.perf_counter()
-        result = _transcribe_on_umbra(
+        stt_backend, stt_service = _stt_service_health()
+        result = _transcribe_on_stt_service(
             normalized_audio,
             content_type=normalized_content_type,
+            base_url=str(stt_service.get("url") or _stt_default_url()),
+            service_label=_stt_service_label(stt_backend),
             language=language,
+            word_timestamps=timestamped,
         )
         transcribe_seconds = time.perf_counter() - transcribe_started
         result["normalization"] = normalization
-        text = str(result.get("text") or "").strip()
+        plain_text = str(result.get("text") or "").strip()
+        text = (
+            _format_timestamped_transcript(result.get("segments"), fallback_text=plain_text)
+            if timestamped
+            else plain_text
+        )
         item_payload = None
         if text:
             if source:
-                item, _prepare_audio = self.upsert_library_item({
+                payload = {
                     "text": text,
-                    "label": "Dictation",
+                    "label": label or "Dictation",
                     "kind": "dictation",
                     "source": source,
                     "source_item_id": source_item_id or f"dictation:{uuid.uuid4()}",
                     "source_meta": source_meta or {},
-                })
+                }
+                if title:
+                    payload["title"] = title
+                item, _prepare_audio = self.upsert_library_item(payload)
             else:
-                item = self.add_text(text, label="Dictation", kind="dictation")
+                item = self.add_text(text, label=label or "Dictation", kind="dictation")
+            if timestamped and plain_text:
+                item.word_count = _word_count(plain_text)
+                item.updated_at = time.time()
+                with self._lock:
+                    self._upsert_item(item)
             item_payload = self._item_payload(item)
         total_seconds = time.perf_counter() - started
         print(
             "[doc-reader-stt] "
             f"source_bytes={source_bytes} normalized_bytes={len(normalized_audio)} "
             f"elapsed={elapsed_seconds or 0:.2f}s normalize={normalize_seconds:.2f}s "
-            f"umbra={transcribe_seconds:.2f}s total={total_seconds:.2f}s chars={len(text)}",
+            f"backend={stt_backend} transcribe={transcribe_seconds:.2f}s "
+            f"total={total_seconds:.2f}s chars={len(text)}",
             file=sys.stderr,
             flush=True,
         )
         with self._lock:
             self._status = (
-                f"Dictation transcribed in {total_seconds:.1f}s."
+                f"{status_label or 'Dictation'} transcribed in {total_seconds:.1f}s."
                 if text
-                else "Dictation produced no text."
+                else f"{status_label or 'Dictation'} produced no text."
             )
         return {
             "ok": True,
             "text": text,
+            "plain_text": plain_text,
             "item": item_payload,
             "transcription": result,
             "state": self.state(),
@@ -1251,6 +1404,39 @@ class ReaderService:
             "kind": item.kind,
             "text": path.read_text(encoding="utf-8").strip(),
         }
+
+    def update_item_text(self, item_id: str, text: str) -> dict[str, Any]:
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            raise ValueError("No text to save.")
+        with self._lock:
+            item = self._find_item(item_id)
+            if item is None:
+                raise KeyError("History item not found.")
+            path = Path(item.source_path)
+            if path.suffix.lower() not in {".txt", ".md", ".markdown"} and item.kind != "dictation":
+                raise ValueError("History item text is not editable.")
+            if item.kind == "document" and path.suffix.lower() not in {".txt", ".md", ".markdown"}:
+                raise ValueError("Document type is not editable here.")
+            if not path.is_file():
+                if item.kind == "document":
+                    raise FileNotFoundError("Source file not found.")
+                path = self.text_dir / f"{item.id}.txt"
+                item.source_path = str(path)
+
+            path.write_text(f"{cleaned}\n", encoding="utf-8")
+            self._clear_item_audio_locked(item, remove_file=True)
+            metrics_text = _metrics_text_for_item_text(item, cleaned)
+            now = time.time()
+            item.snippet = _snippet(cleaned)
+            item.text_hash = _text_hash(cleaned)
+            item.word_count = _word_count(metrics_text)
+            item.metrics_channel = _metrics_channel_for_item(item)
+            item.updated_at = now
+            self._status = "Library card saved."
+            self._upsert_item(item)
+            payload = self._item_payload(item)
+        return {"ok": True, "item": payload, "state": self.state()}
 
     def last_recording_audio(self) -> tuple[bytes, str]:
         settings = self._settings()
@@ -1652,10 +1838,23 @@ class DocReaderHandler(BaseHTTPRequestHandler):
                 return
 
             if route_path == "/api/upload":
-                filename, data = self._read_upload()
+                filename, data, _content_type = self._read_upload()
                 item = self.reader.add_document(filename, data)
                 self.reader.play(item.id)
                 self._send_json(self.reader.state())
+                return
+
+            if route_path == "/api/audio/transcribe":
+                filename, data, content_type = self._read_upload()
+                self._send_json(
+                    self.reader.transcribe_audio_file(
+                        filename,
+                        data,
+                        content_type=content_type,
+                        language=_optional_string(self.headers.get("X-Doc-Reader-Language")),
+                        timestamped=_header_flag(self.headers.get("X-Doc-Reader-Timestamps")),
+                    )
+                )
                 return
 
             if route_path == "/api/pause":
@@ -1670,8 +1869,23 @@ class DocReaderHandler(BaseHTTPRequestHandler):
                 self._send_json(self.reader.update_settings(self._read_json()))
                 return
 
+            text_prefix = "/api/items/"
+            if route_path.startswith(text_prefix) and route_path.endswith("/text"):
+                item_id = unquote(route_path[len(text_prefix) : -len("/text")])
+                payload = self._read_json()
+                self._send_json(self.reader.update_item_text(item_id, str(payload.get("text", ""))))
+                return
+
             if route_path == "/api/native/start":
                 self._send_json(self.reader.start_native_helper())
+                return
+
+            if route_path == "/api/native/stop":
+                self._send_json(self.reader.stop_native_helper())
+                return
+
+            if route_path == "/api/native/reset":
+                self._send_json(self.reader.reset_native_helper())
                 return
 
             if route_path == "/api/native/dictation":
@@ -1728,7 +1942,7 @@ class DocReaderHandler(BaseHTTPRequestHandler):
             return b""
         return self.rfile.read(length)
 
-    def _read_upload(self) -> tuple[str, bytes]:
+    def _read_upload(self) -> tuple[str, bytes, str]:
         content_type = self.headers.get("Content-Type", "")
         length = int(self.headers.get("Content-Length", "0") or "0")
         if "multipart/form-data" not in content_type or length <= 0:
@@ -1748,7 +1962,7 @@ class DocReaderHandler(BaseHTTPRequestHandler):
                 payload = part.get_payload(decode=True)
                 if payload is None:
                     payload = b""
-                return filename, payload
+                return filename, payload, part.get_content_type()
         raise ValueError("No uploaded file found.")
 
     def _send_json(self, payload: dict[str, Any], *, status: HTTPStatus = HTTPStatus.OK) -> None:
@@ -1821,6 +2035,140 @@ def _safe_filename(filename: str) -> str:
     cleaned = Path(filename or "document.txt").name
     cleaned = re.sub(r"[^A-Za-z0-9._ -]+", "-", cleaned).strip(" .-")
     return cleaned or "document.txt"
+
+
+def _format_timestamped_transcript(segments: object, *, fallback_text: str) -> str:
+    phrases = _timestamp_phrases(segments)
+    if not phrases:
+        return fallback_text
+    return "\n".join(
+        f"[{_phrase_timestamp(start)} - {_phrase_timestamp(end)}] {text}"
+        for start, end, text in phrases
+        if text
+    )
+
+
+def _timestamp_phrases(segments: object) -> list[tuple[float, float, str]]:
+    if not isinstance(segments, list):
+        return []
+    phrases: list[tuple[float, float, str]] = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        word_phrases = _timestamp_phrases_from_words(segment.get("words"))
+        if word_phrases:
+            phrases.extend(word_phrases)
+            continue
+        text = str(segment.get("text") or "").strip()
+        if not text:
+            continue
+        start = _timestamp_float(segment.get("start"))
+        end = _timestamp_float(segment.get("end"))
+        start_value = start if start is not None else 0.0
+        end_value = end if end is not None else start_value
+        phrases.append((start_value, max(start_value, end_value), text))
+    return phrases
+
+
+def _timestamp_phrases_from_words(words: object) -> list[tuple[float, float, str]]:
+    if not isinstance(words, list):
+        return []
+    phrases: list[tuple[float, float, str]] = []
+    current_words: list[str] = []
+    phrase_start: float | None = None
+    phrase_end: float | None = None
+    for word in words:
+        if not isinstance(word, dict):
+            continue
+        text = str(word.get("word") or "").strip()
+        if not text:
+            continue
+        start = _timestamp_float(word.get("start"))
+        end = _timestamp_float(word.get("end"))
+        if phrase_start is None:
+            phrase_start = start if start is not None else phrase_end
+        if end is not None:
+            phrase_end = end
+        elif start is not None:
+            phrase_end = start
+        current_words.append(text)
+        duration = (phrase_end or 0.0) - (phrase_start or 0.0)
+        if (
+            re.search(r"[.!?;:]$|,$", text)
+            or len(current_words) >= 14
+            or duration >= 7.0
+        ):
+            phrase = _joined_word_text(current_words)
+            if phrase:
+                start_value = phrase_start if phrase_start is not None else 0.0
+                end_value = phrase_end if phrase_end is not None else start_value
+                phrases.append((max(0.0, start_value), max(start_value, end_value), phrase))
+            current_words = []
+            phrase_start = None
+            phrase_end = None
+    phrase = _joined_word_text(current_words)
+    if phrase:
+        start_value = phrase_start if phrase_start is not None else 0.0
+        end_value = phrase_end if phrase_end is not None else start_value
+        phrases.append((max(0.0, start_value), max(start_value, end_value), phrase))
+    return phrases
+
+
+def _joined_word_text(words: list[str]) -> str:
+    text = " ".join(word.strip() for word in words if word.strip())
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    return text.strip()
+
+
+def _phrase_timestamp(seconds: float) -> str:
+    seconds = max(0.0, float(seconds or 0.0))
+    tenths = int(round(seconds * 10))
+    total_seconds, tenth = divmod(tenths, 10)
+    minutes, second = divmod(total_seconds, 60)
+    hours, minute = divmod(minutes, 60)
+    if hours:
+        return f"{hours}:{minute:02d}:{second:02d}.{tenth}"
+    return f"{minute:02d}:{second:02d}.{tenth}"
+
+
+def _timestamp_float(value: object) -> float | None:
+    try:
+        parsed = float("" if value is None else str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if parsed != parsed or parsed < 0:
+        return None
+    return parsed
+
+
+def _is_audio_content_type(content_type: str) -> bool:
+    normalized = str(content_type or "").split(";", 1)[0].strip().lower()
+    return normalized.startswith("audio/") or normalized in {"video/mp4", "video/webm"}
+
+
+def _audio_upload_content_type(filename: str, content_type: str) -> str:
+    normalized = str(content_type or "").split(";", 1)[0].strip().lower()
+    if _is_audio_content_type(normalized):
+        return normalized
+
+    guessed, _encoding = mimetypes.guess_type(filename)
+    if guessed and _is_audio_content_type(guessed):
+        return guessed
+
+    suffix = Path(filename).suffix.lower()
+    suffix_types = {
+        ".aac": "audio/aac",
+        ".aif": "audio/aiff",
+        ".aiff": "audio/aiff",
+        ".flac": "audio/flac",
+        ".m4a": "audio/mp4",
+        ".mp3": "audio/mpeg",
+        ".mp4": "video/mp4",
+        ".ogg": "audio/ogg",
+        ".wav": "audio/wav",
+        ".webm": "audio/webm",
+    }
+    return suffix_types.get(suffix, normalized or "audio/wav")
 
 
 def _snippet(text: str) -> str:
@@ -1937,6 +2285,19 @@ def _normalize_history_entry_payload(entry: dict[str, Any], item_fields: set[str
 
 def _word_count(text: str) -> int:
     return len(WORD_RE.findall(str(text or "")))
+
+
+def _metrics_text_for_item_text(item: HistoryItem, text: str) -> str:
+    if _is_dictation_item(item):
+        return _strip_timestamp_line_prefixes(text)
+    return text
+
+
+def _strip_timestamp_line_prefixes(text: str) -> str:
+    return "\n".join(
+        TIMESTAMP_LINE_PREFIX_RE.sub("", line)
+        for line in str(text or "").splitlines()
+    )
 
 
 def _metrics_channel_for_kind(kind: str) -> str:
@@ -2418,6 +2779,74 @@ def _launch_agent_loaded(target: str) -> bool:
     return result.returncode == 0
 
 
+def _kickstart_launch_agent(target: str) -> tuple[int, str]:
+    process = subprocess.Popen(
+        ["/bin/launchctl", "kickstart", target],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        _stdout, stderr = process.communicate(timeout=2.0)
+    except subprocess.TimeoutExpired:
+        process.terminate()
+        try:
+            process.wait(timeout=0.25)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        return 0, ""
+    return process.returncode, (stderr or "").strip()
+
+
+def _terminate_native_helper_processes() -> None:
+    if sys.platform != "darwin":
+        return
+    pids = _native_helper_process_pids()
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    if not pids:
+        return
+    time.sleep(0.4)
+    remaining = set(_native_helper_process_pids())
+    for pid in pids:
+        if pid not in remaining:
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def _native_helper_process_pids() -> list[int]:
+    result = subprocess.run(
+        ["/bin/ps", "-axww", "-o", "pid=,command="],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        match = re.match(r"\s*(\d+)\s+(.+)$", line)
+        if not match:
+            continue
+        pid = int(match.group(1))
+        command = match.group(2)
+        if pid == os.getpid():
+            continue
+        if (
+            "/Doc Reader.app/Contents/MacOS/DocReader" in command
+            or "/DocReader.app/Contents/MacOS/DocReader" in command
+        ):
+            pids.append(pid)
+    return sorted(set(pids))
+
+
 def _clamped_float(value: Any, minimum: float, maximum: float) -> float:
     try:
         number = float(value)
@@ -2557,6 +2986,48 @@ def _service_health(base_url: str) -> dict[str, Any]:
             "ms": round((time.perf_counter() - started) * 1000),
             "error": str(exc),
         }
+
+
+def _stt_service_candidates() -> list[tuple[str, str]]:
+    override = _env("DOC_READER_STT_URL", "").strip()
+    if override:
+        return [("custom-whisper", override)]
+    return [
+        ("tailscale-4090-whisper", _env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL)),
+        ("mac-whisper", _env("DOC_READER_TTS_MAC_URL", DEFAULT_TTS_MAC_URL)),
+    ]
+
+
+def _stt_default_url() -> str:
+    candidates = _stt_service_candidates()
+    return candidates[0][1] if candidates else _env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL)
+
+
+def _stt_service_label(backend: str) -> str:
+    if backend == "mac-whisper":
+        return "Mac Whisper"
+    if backend == "custom-whisper":
+        return "Whisper STT"
+    return "4090 Whisper"
+
+
+def _stt_service_health() -> tuple[str, dict[str, Any]]:
+    fallback: tuple[str, dict[str, Any]] | None = None
+    for backend, url in _stt_service_candidates():
+        service = _service_health(url)
+        service["stt_backend"] = backend
+        engines = service.get("engines", {}) if isinstance(service, dict) else {}
+        whisper = engines.get("whisper", {}) if isinstance(engines, dict) else {}
+        if fallback is None:
+            fallback = (backend, service)
+        if bool(service.get("ok")) and bool(whisper.get("enabled")):
+            return backend, service
+    if fallback is not None:
+        return fallback
+    backend = "tailscale-4090-whisper"
+    service = _service_health(_env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL))
+    service["stt_backend"] = backend
+    return backend, service
 
 
 def _synthesize_library_audio(text: str, *, rate: int = DEFAULT_RATE) -> bytes:
@@ -2708,8 +3179,16 @@ def _normalize_stt_audio(
     }
 
 
-def _transcribe_on_umbra(audio: bytes, *, content_type: str, language: str | None = None) -> dict[str, Any]:
-    base_url = _env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL).rstrip("/")
+def _transcribe_on_stt_service(
+    audio: bytes,
+    *,
+    content_type: str,
+    base_url: str,
+    service_label: str,
+    language: str | None = None,
+    word_timestamps: bool = False,
+) -> dict[str, Any]:
+    base_url = base_url.rstrip("/")
     timeout_seconds = max(10, _env_int("DOC_READER_STT_TIMEOUT_SECONDS", 90))
     headers = {
         "Content-Type": content_type or "audio/wav",
@@ -2718,6 +3197,8 @@ def _transcribe_on_umbra(audio: bytes, *, content_type: str, language: str | Non
     stt_language = _optional_string(language) or _env("DOC_READER_STT_LANGUAGE", "en")
     if stt_language:
         headers["X-Doc-Reader-Language"] = stt_language
+    if word_timestamps:
+        headers["X-Doc-Reader-Word-Timestamps"] = "1"
     request = urlrequest.Request(
         f"{base_url}/v1/audio/transcriptions",
         data=audio,
@@ -2730,16 +3211,17 @@ def _transcribe_on_umbra(audio: bytes, *, content_type: str, language: str | Non
             payload = json.loads(response.read().decode("utf-8"))
     except urlerror.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"4090 transcription failed ({exc.code}): {detail}") from exc
+        raise RuntimeError(f"{service_label} transcription failed ({exc.code}): {detail}") from exc
     except (OSError, ValueError, urlerror.URLError) as exc:
-        raise RuntimeError(f"4090 transcription network error: {exc}") from exc
+        raise RuntimeError(f"{service_label} transcription network error: {exc}") from exc
 
     if not isinstance(payload, dict):
-        raise RuntimeError("4090 transcription returned an invalid response.")
+        raise RuntimeError(f"{service_label} transcription returned an invalid response.")
     if payload.get("ok") is False:
-        raise RuntimeError(str(payload.get("error") or "4090 transcription failed."))
+        raise RuntimeError(str(payload.get("error") or f"{service_label} transcription failed."))
     payload["request_seconds"] = round(time.perf_counter() - started, 3)
     payload["service_url"] = base_url
+    payload["service_label"] = service_label
     return payload
 
 
@@ -2779,12 +3261,22 @@ def _atempo_filter(tempo: float) -> str:
 
 def _suffix_from_content_type(content_type: str) -> str:
     normalized = content_type.split(";", 1)[0].strip().lower()
+    if normalized in {"audio/aac", "audio/x-aac"}:
+        return ".aac"
     if normalized in {"audio/mp4", "audio/m4a", "video/mp4"}:
         return ".m4a"
     if normalized in {"audio/aiff", "audio/x-aiff"}:
         return ".aiff"
     if normalized in {"audio/mpeg", "audio/mp3"}:
         return ".mp3"
+    if normalized in {"audio/flac", "audio/x-flac"}:
+        return ".flac"
+    if normalized in {"audio/ogg", "application/ogg"}:
+        return ".ogg"
+    if normalized in {"audio/webm", "video/webm"}:
+        return ".webm"
+    if normalized in {"audio/wav", "audio/x-wav", "audio/wave"}:
+        return ".wav"
     return ".wav"
 
 
@@ -2804,6 +3296,10 @@ def _local_tool(name: str) -> str:
 def _optional_string(value: object) -> str | None:
     cleaned = str(value or "").strip()
     return cleaned or None
+
+
+def _header_flag(value: object) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _optional_float(value: object) -> float | None:
@@ -3176,6 +3672,15 @@ INDEX_HTML = r"""<!doctype html>
       background: transparent;
       color: var(--ink);
     }
+    .audio-upload-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+    }
+    .audio-upload-row input[type="file"] {
+      min-width: 0;
+    }
     .check-row {
       display: flex;
       align-items: center;
@@ -3192,6 +3697,25 @@ INDEX_HTML = r"""<!doctype html>
       gap: 8px;
       flex-wrap: wrap;
       align-items: center;
+    }
+    .service-row {
+      justify-content: space-between;
+    }
+    .service-toggle {
+      min-width: 104px;
+    }
+    .service-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .service-reset {
+      min-width: 72px;
+    }
+    .service-toggle.running {
+      border-color: var(--warn);
+      color: var(--warn);
     }
     button {
       border: 1px solid var(--line);
@@ -3338,6 +3862,11 @@ INDEX_HTML = r"""<!doctype html>
       gap: 12px;
       align-items: center;
     }
+    .card-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
     .title {
       font-weight: 650;
       overflow-wrap: anywhere;
@@ -3352,6 +3881,11 @@ INDEX_HTML = r"""<!doctype html>
       overflow-wrap: anywhere;
       color: var(--ink);
       font-size: 14px;
+    }
+    .dictation-edit {
+      min-height: 160px;
+      line-height: 1.35;
+      white-space: pre-wrap;
     }
     .voice-status {
       color: var(--muted);
@@ -3415,6 +3949,7 @@ INDEX_HTML = r"""<!doctype html>
       header { align-items: flex-start; flex-direction: column; }
       .status { text-align: left; }
       .grid { grid-template-columns: 1fr; }
+      .audio-upload-row { grid-template-columns: 1fr; }
       .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
@@ -3430,6 +3965,17 @@ INDEX_HTML = r"""<!doctype html>
         <div>
           <label for="file">Document</label>
           <input id="file" type="file" accept=".pdf,.docx,.txt,.md,.markdown">
+        </div>
+        <div>
+          <label for="audioFile">Audio</label>
+          <div class="audio-upload-row">
+            <input id="audioFile" type="file" accept="audio/*,video/mp4,video/webm,.aac,.aif,.aiff,.flac,.m4a,.mp3,.mp4,.ogg,.wav,.webm">
+            <div class="check-row">
+              <input id="audioTimestamps" type="checkbox">
+              <label for="audioTimestamps">Timestamps</label>
+            </div>
+          </div>
+          <div class="voice-status" id="audioFileStatus"></div>
         </div>
         <div>
           <label for="text">Text</label>
@@ -3448,12 +3994,15 @@ INDEX_HTML = r"""<!doctype html>
           <input id="readRate" type="range" min="90" max="300" step="5" value="180">
         </div>
         <div>
-          <div class="row">
+          <div class="row service-row">
             <div class="check-row">
               <input id="dictationEnabled" type="checkbox">
-              <label for="dictationEnabled">Hold Option for 4090 dictation</label>
+              <label for="dictationEnabled">Speech-to-text</label>
             </div>
-            <button id="startNativeHelper" type="button" hidden>Start Helper</button>
+            <div class="service-actions">
+              <button id="nativeHelperToggle" class="service-toggle" type="button">Start Helper</button>
+              <button id="nativeHelperReset" class="service-reset" type="button" title="Restart the native hotkey helper">Reset</button>
+            </div>
           </div>
           <div class="voice-status" id="dictationStatus"></div>
           <div class="mic-meter" id="dictationMeter" aria-label="Microphone level"><div></div></div>
@@ -3520,7 +4069,15 @@ INDEX_HTML = r"""<!doctype html>
     </div>
   </main>
   <script>
-    const state = { data: null };
+    const state = {
+      data: null,
+      editingItemId: "",
+      editingText: "",
+      editingSavingId: "",
+      libraryPointerSelecting: false,
+      libraryRenderDeferred: false,
+      librarySelectionFlushTimer: null
+    };
     const statusEl = document.getElementById("status");
     const libraryEl = document.getElementById("library");
     const libraryCountEl = document.getElementById("libraryCount");
@@ -3529,6 +4086,9 @@ INDEX_HTML = r"""<!doctype html>
     const errorEl = document.getElementById("error");
     const textEl = document.getElementById("text");
     const fileEl = document.getElementById("file");
+    const audioFileEl = document.getElementById("audioFile");
+    const audioTimestampsEl = document.getElementById("audioTimestamps");
+    const audioFileStatusEl = document.getElementById("audioFileStatus");
     const pauseBtn = document.getElementById("pause");
     const stopBtn = document.getElementById("stop");
     const voiceEl = document.getElementById("voice");
@@ -3541,7 +4101,8 @@ INDEX_HTML = r"""<!doctype html>
     const dictationRecordingDebugEl = document.getElementById("dictationRecordingDebug");
     const dictationRecordingStatusEl = document.getElementById("dictationRecordingStatus");
     const dictationRecordingAudioEl = document.getElementById("dictationRecordingAudio");
-    const startNativeHelperEl = document.getElementById("startNativeHelper");
+    const nativeHelperToggleEl = document.getElementById("nativeHelperToggle");
+    const nativeHelperResetEl = document.getElementById("nativeHelperReset");
     const microphoneEl = document.getElementById("microphone");
     const microphoneStatusEl = document.getElementById("microphoneStatus");
     const showAllBtn = document.getElementById("showAll");
@@ -3555,6 +4116,9 @@ INDEX_HTML = r"""<!doctype html>
     const openItemsEl = document.getElementById("openItems");
     const analysisSummaryEl = document.getElementById("analysisSummary");
     const topicMapEl = document.getElementById("topicMap");
+    state.audioFileAction = "";
+    state.nativeHelperAction = "";
+    audioTimestampsEl.checked = localStorage.getItem("docReader.audioTimestamps") === "true";
     state.activeView = localStorage.getItem("docReader.historyView") || "all";
     state.libraryQuery = localStorage.getItem("docReader.libraryQuery") || "";
     librarySearchEl.value = state.libraryQuery;
@@ -3614,10 +4178,16 @@ INDEX_HTML = r"""<!doctype html>
 
       const library = data.library || data.items || [];
       const dictations = data.dictations || [];
-      if (dictations.length > previousDictationCount) {
+      const preserveLibraryDom = shouldPreserveLibraryDom();
+      if (!preserveLibraryDom && dictations.length > previousDictationCount) {
         setActiveView("dictations");
+        return;
       }
-      renderLibrary(library);
+      if (preserveLibraryDom) {
+        state.libraryRenderDeferred = true;
+      } else {
+        renderLibrary(library);
+      }
     }
 
     function renderSignalMap(metrics, analysis) {
@@ -3648,8 +4218,7 @@ INDEX_HTML = r"""<!doctype html>
     function setActiveView(view) {
       state.activeView = ["readings", "dictations", "clawdad"].includes(view) ? view : "all";
       localStorage.setItem("docReader.historyView", state.activeView);
-      const data = state.data || {};
-      renderLibrary(data.library || data.items || []);
+      renderLibraryFromState();
     }
 
     function filteredLibraryItems(items) {
@@ -3665,6 +4234,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function renderLibrary(items) {
+      state.libraryRenderDeferred = false;
       const allItems = Array.isArray(items) ? items : [];
       const filtered = filteredLibraryItems(allItems);
       libraryEl.innerHTML = "";
@@ -3694,6 +4264,42 @@ INDEX_HTML = r"""<!doctype html>
       for (const item of filtered) {
         libraryEl.appendChild(makeLibraryCard(item));
       }
+    }
+
+    function renderLibraryFromState() {
+      const data = state.data || {};
+      renderLibrary(data.library || data.items || []);
+    }
+
+    function shouldPreserveLibraryDom() {
+      return !!state.editingItemId || state.libraryPointerSelecting || libraryHasTextSelection();
+    }
+
+    function libraryHasTextSelection() {
+      const selection = window.getSelection ? window.getSelection() : null;
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
+      return nodeInsideLibrary(selection.anchorNode) || nodeInsideLibrary(selection.focusNode);
+    }
+
+    function nodeInsideLibrary(node) {
+      if (!node) return false;
+      const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+      return !!element && libraryEl.contains(element);
+    }
+
+    function flushDeferredLibraryRender() {
+      if (!state.libraryRenderDeferred || shouldPreserveLibraryDom()) return;
+      renderLibraryFromState();
+    }
+
+    function queueDeferredLibraryFlush(delay = 140) {
+      if (state.librarySelectionFlushTimer) {
+        window.clearTimeout(state.librarySelectionFlushTimer);
+      }
+      state.librarySelectionFlushTimer = window.setTimeout(() => {
+        state.librarySelectionFlushTimer = null;
+        flushDeferredLibraryRender();
+      }, delay);
     }
 
     function isDictationItem(item) {
@@ -3784,30 +4390,131 @@ INDEX_HTML = r"""<!doctype html>
       meta.textContent = `${isClawdadItem(item) ? "Clawdad dictation" : "Dictation"}${wordsLabel}`;
       info.append(title, meta);
 
-      const copy = document.createElement("button");
-      copy.className = "icon-button";
-      copy.type = "button";
-      copy.title = "Copy dictation";
-      copy.setAttribute("aria-label", "Copy dictation");
-      copy.innerHTML = icon("copy");
-      copy.addEventListener("click", async () => {
-        try {
-          errorEl.textContent = "";
-          const payload = await api(`/api/items/${encodeURIComponent(item.id)}/text`);
-          await navigator.clipboard.writeText(payload.text || "");
-          showCopied(copy);
-        } catch (error) {
-          errorEl.textContent = error.message;
-        }
-      });
+      const actions = document.createElement("div");
+      actions.className = "card-actions";
+      const editing = state.editingItemId === item.id;
+      const saving = state.editingSavingId === item.id;
+      if (editing) {
+        const save = document.createElement("button");
+        save.className = "icon-button primary";
+        save.type = "button";
+        save.title = saving ? "Saving dictation" : "Save dictation";
+        save.disabled = saving;
+        save.setAttribute("aria-label", save.title);
+        save.innerHTML = icon("save");
+        save.addEventListener("click", () => saveDictationEdit(item));
 
-      top.append(info, copy);
+        const cancel = document.createElement("button");
+        cancel.className = "icon-button";
+        cancel.type = "button";
+        cancel.title = "Cancel edit";
+        cancel.disabled = saving;
+        cancel.setAttribute("aria-label", "Cancel edit");
+        cancel.innerHTML = icon("x");
+        cancel.addEventListener("click", cancelDictationEdit);
+        actions.append(save, cancel);
+      } else {
+        const copy = document.createElement("button");
+        copy.className = "icon-button";
+        copy.type = "button";
+        copy.title = "Copy dictation";
+        copy.disabled = !!state.editingItemId;
+        copy.setAttribute("aria-label", "Copy dictation");
+        copy.innerHTML = icon("copy");
+        copy.addEventListener("click", async () => {
+          try {
+            errorEl.textContent = "";
+            const payload = await api(`/api/items/${encodeURIComponent(item.id)}/text`);
+            await navigator.clipboard.writeText(payload.text || "");
+            showCopied(copy);
+          } catch (error) {
+            errorEl.textContent = error.message;
+          }
+        });
 
-      const snippet = document.createElement("div");
-      snippet.className = "dictation-text";
-      snippet.textContent = item.text || item.snippet || "";
-      card.append(top, snippet);
+        const edit = document.createElement("button");
+        edit.className = "icon-button";
+        edit.type = "button";
+        edit.title = "Edit dictation";
+        edit.disabled = !!state.editingItemId;
+        edit.setAttribute("aria-label", "Edit dictation");
+        edit.innerHTML = icon("edit");
+        edit.addEventListener("click", () => beginDictationEdit(item));
+        actions.append(copy, edit);
+      }
+
+      top.append(info, actions);
+
+      if (editing) {
+        const editor = document.createElement("textarea");
+        editor.className = "dictation-edit";
+        editor.dataset.itemId = item.id;
+        editor.value = state.editingText;
+        editor.disabled = saving;
+        editor.addEventListener("input", () => {
+          state.editingText = editor.value;
+        });
+        editor.addEventListener("keydown", (event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            event.preventDefault();
+            saveDictationEdit(item);
+          }
+        });
+        card.append(top, editor);
+      } else {
+        const snippet = document.createElement("div");
+        snippet.className = "dictation-text";
+        snippet.textContent = item.text || item.snippet || "";
+        card.append(top, snippet);
+      }
       return card;
+    }
+
+    function beginDictationEdit(item) {
+      state.editingItemId = item.id;
+      state.editingText = item.text || item.snippet || "";
+      state.editingSavingId = "";
+      renderLibrary((state.data && (state.data.library || state.data.items)) || []);
+      window.requestAnimationFrame(() => {
+        const editor = Array.from(libraryEl.querySelectorAll("textarea.dictation-edit"))
+          .find((element) => element.dataset.itemId === item.id);
+        if (!editor) return;
+        editor.focus();
+        editor.setSelectionRange(editor.value.length, editor.value.length);
+      });
+    }
+
+    function cancelDictationEdit() {
+      state.editingItemId = "";
+      state.editingText = "";
+      state.editingSavingId = "";
+      renderLibrary((state.data && (state.data.library || state.data.items)) || []);
+    }
+
+    async function saveDictationEdit(item) {
+      const text = String(state.editingText || "").trim();
+      if (!text) {
+        errorEl.textContent = "Dictation text cannot be empty.";
+        return;
+      }
+      try {
+        errorEl.textContent = "";
+        state.editingSavingId = item.id;
+        renderLibrary((state.data && (state.data.library || state.data.items)) || []);
+        const payload = await api(`/api/items/${encodeURIComponent(item.id)}/text`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text })
+        });
+        state.editingItemId = "";
+        state.editingText = "";
+        state.editingSavingId = "";
+        render(payload.state || state.data || {});
+      } catch (error) {
+        state.editingSavingId = "";
+        renderLibrary((state.data && (state.data.library || state.data.items)) || []);
+        errorEl.textContent = error.message;
+      }
     }
 
     function showCopied(button) {
@@ -3822,6 +4529,15 @@ INDEX_HTML = r"""<!doctype html>
     function icon(name) {
       if (name === "check") {
         return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+      }
+      if (name === "edit") {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+      }
+      if (name === "save") {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>';
+      }
+      if (name === "x") {
+        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
       }
       return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>';
     }
@@ -3870,15 +4586,20 @@ INDEX_HTML = r"""<!doctype html>
     function renderDictation(stt) {
       dictationEnabledEl.checked = !!stt.enabled;
       const service = stt.service || {};
-      const serviceLabel = service.ok ? "4090 online" : "4090 offline";
+      const backendLabel = stt.backend === "mac-whisper" ? "Mac" : "4090";
+      const serviceLabel = service.ok ? `${backendLabel} online` : `${backendLabel} offline`;
       const modelLabel = stt.loaded ? "model loaded" : (stt.ready ? "model ready" : "model unavailable");
       const mic = stt.microphone || {};
       renderMicrophones(mic);
+      renderNativeHelperToggle(mic);
       const helperLabel = mic.recording
         ? "recording"
-        : (mic.recording_start_pending ? "starting recorder" : (mic.native_helper_online ? "helper online" : "start app helper"));
+        : (
+          mic.recording_start_pending
+            ? "starting recorder"
+            : (state.nativeHelperAction || (mic.native_helper_online ? "helper online" : "helper offline"))
+        );
       const inputLabel = mic.input_monitoring_trusted ? "hotkey allowed" : "allow Input Monitoring";
-      startNativeHelperEl.hidden = !stt.enabled || !!mic.native_helper_online;
       dictationStatusEl.textContent = `${stt.label || "4090 Whisper"} / ${serviceLabel} / ${modelLabel} / ${helperLabel} / ${inputLabel}`;
       const level = Math.max(0, Math.min(1, Number(mic.audio_level || 0)));
       const peak = Math.max(0, Math.min(1, Number(mic.audio_peak_level || 0)));
@@ -3886,6 +4607,37 @@ INDEX_HTML = r"""<!doctype html>
       dictationMeterEl.classList.toggle("active", !!mic.recording || !!mic.recording_start_pending);
       dictationMeterEl.title = `Mic level ${Math.round(level * 100)}%, peak ${Math.round(peak * 100)}%`;
       renderLastRecording(mic.last_recording || {});
+      renderAudioFileStatus(stt);
+    }
+
+    function renderAudioFileStatus(stt) {
+      const busy = !!state.audioFileAction;
+      const available = !!stt.enabled && !!stt.ready;
+      const label = stt.label || "Whisper";
+      audioFileEl.disabled = busy || !available;
+      audioFileStatusEl.textContent = state.audioFileAction || (
+        available ? `${label} ready` : (stt.enabled ? `${label} unavailable` : "Speech-to-text off")
+      );
+    }
+
+    function renderNativeHelperToggle(mic) {
+      const busy = !!state.nativeHelperAction;
+      const online = !!mic.native_helper_online;
+      nativeHelperToggleEl.disabled = busy;
+      nativeHelperResetEl.disabled = busy;
+      nativeHelperToggleEl.classList.toggle("running", online);
+      if (state.nativeHelperAction === "starting helper") {
+        nativeHelperToggleEl.textContent = "Starting...";
+      } else if (state.nativeHelperAction === "stopping helper") {
+        nativeHelperToggleEl.textContent = "Stopping...";
+      } else if (state.nativeHelperAction === "resetting helper") {
+        nativeHelperToggleEl.textContent = "Resetting...";
+      } else {
+        nativeHelperToggleEl.textContent = online ? "Stop Helper" : "Start Helper";
+      }
+      nativeHelperResetEl.textContent = state.nativeHelperAction === "resetting helper"
+        ? "Resetting..."
+        : "Reset";
     }
 
     function renderLastRecording(recording) {
@@ -3961,6 +4713,34 @@ INDEX_HTML = r"""<!doctype html>
       } finally {
         fileEl.value = "";
       }
+    });
+
+    audioFileEl.addEventListener("change", async () => {
+      const file = audioFileEl.files && audioFileEl.files[0];
+      if (!file) return;
+      const body = new FormData();
+      body.append("file", file);
+      try {
+        errorEl.textContent = "";
+        state.audioFileAction = `Transcribing ${file.name}`;
+        renderAudioFileStatus((state.data && state.data.stt) || {});
+        const payload = await api("/api/audio/transcribe", {
+          method: "POST",
+          headers: { "X-Doc-Reader-Timestamps": audioTimestampsEl.checked ? "1" : "0" },
+          body
+        });
+        render(payload.state || payload);
+      } catch (error) {
+        errorEl.textContent = error.message;
+      } finally {
+        state.audioFileAction = "";
+        audioFileEl.value = "";
+        renderAudioFileStatus((state.data && state.data.stt) || {});
+      }
+    });
+
+    audioTimestampsEl.addEventListener("change", () => {
+      localStorage.setItem("docReader.audioTimestamps", String(audioTimestampsEl.checked));
     });
 
     pauseBtn.addEventListener("click", async () => {
@@ -4051,12 +4831,44 @@ INDEX_HTML = r"""<!doctype html>
       }
     });
 
-    startNativeHelperEl.addEventListener("click", async () => {
+    nativeHelperToggleEl.addEventListener("click", async () => {
       try {
         errorEl.textContent = "";
-        render(await api("/api/native/start", { method: "POST" }));
+        const mic = state.data && state.data.stt && state.data.stt.microphone
+          ? state.data.stt.microphone
+          : {};
+        const online = !!mic.native_helper_online;
+        state.nativeHelperAction = online ? "stopping helper" : "starting helper";
+        renderNativeHelperToggle(mic);
+        await api(online ? "/api/native/stop" : "/api/native/start", { method: "POST" });
+        render(await api("/api/state"));
       } catch (error) {
         errorEl.textContent = error.message;
+      } finally {
+        state.nativeHelperAction = "";
+        if (state.data && state.data.stt) {
+          renderDictation(state.data.stt);
+        }
+      }
+    });
+
+    nativeHelperResetEl.addEventListener("click", async () => {
+      try {
+        errorEl.textContent = "";
+        const mic = state.data && state.data.stt && state.data.stt.microphone
+          ? state.data.stt.microphone
+          : {};
+        state.nativeHelperAction = "resetting helper";
+        renderNativeHelperToggle(mic);
+        await api("/api/native/reset", { method: "POST" });
+        render(await api("/api/state"));
+      } catch (error) {
+        errorEl.textContent = error.message;
+      } finally {
+        state.nativeHelperAction = "";
+        if (state.data && state.data.stt) {
+          renderDictation(state.data.stt);
+        }
       }
     });
 
@@ -4083,8 +4895,38 @@ INDEX_HTML = r"""<!doctype html>
       renderLibrary((state.data && (state.data.library || state.data.items)) || []);
     });
 
+    libraryEl.addEventListener("pointerdown", (event) => {
+      if (event.target && event.target.closest && event.target.closest("button, input, textarea, select, a")) {
+        return;
+      }
+      state.libraryPointerSelecting = true;
+    });
+
+    document.addEventListener("pointerup", () => {
+      if (!state.libraryPointerSelecting) return;
+      window.setTimeout(() => {
+        state.libraryPointerSelecting = false;
+        queueDeferredLibraryFlush();
+      }, 80);
+    });
+
+    document.addEventListener("pointercancel", () => {
+      state.libraryPointerSelecting = false;
+      queueDeferredLibraryFlush();
+    });
+
+    document.addEventListener("selectionchange", () => {
+      if (!state.libraryRenderDeferred) return;
+      queueDeferredLibraryFlush();
+    });
+
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
+        if (state.editingItemId) {
+          event.preventDefault();
+          cancelDictationEdit();
+          return;
+        }
         if (document.activeElement && document.activeElement.blur) {
           document.activeElement.blur();
         }

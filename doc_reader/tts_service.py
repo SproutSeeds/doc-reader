@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import traceback
+import unicodedata
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,12 +27,14 @@ DEFAULT_STT_BEAM_SIZE = 1
 WAV_MIME = "audio/wav"
 DEFAULT_CHATTERBOX_MAX_SEGMENT_CHARS = 260
 DEFAULT_KOKORO_MAX_SEGMENT_CHARS = 700
+KOKORO_RETRY_MAX_SEGMENT_CHARS = 240
 DEFAULT_SEGMENT_PAUSE_SECONDS = 0.14
 MIN_TTS_SPEED = 0.5
 MAX_TTS_SPEED = 2.0
 URL_RE = re.compile(r"https?://\S+")
 MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
+PHONEMIZER_LINE_MISMATCH = "number of lines in input and output must be equal"
 
 
 @dataclass
@@ -160,6 +163,7 @@ class EngineRegistry:
         audio: bytes,
         suffix: str = ".wav",
         language: str | None = None,
+        word_timestamps: bool = False,
     ) -> TranscriptionResult:
         if "whisper" not in self.enabled_engines:
             raise ValueError("Speech-to-text is not enabled on this sidecar.")
@@ -173,25 +177,35 @@ class EngineRegistry:
             temp_path = Path(handle.name)
             handle.write(audio)
         try:
-            segments_iter, info = model.transcribe(
-                str(temp_path),
-                language=language,
-                vad_filter=True,
-                beam_size=_env_int("DOC_READER_STT_BEAM_SIZE", DEFAULT_STT_BEAM_SIZE),
-            )
+            transcribe_kwargs: dict[str, Any] = {
+                "language": language,
+                "vad_filter": True,
+                "beam_size": _env_int("DOC_READER_STT_BEAM_SIZE", DEFAULT_STT_BEAM_SIZE),
+            }
+            if word_timestamps:
+                transcribe_kwargs["word_timestamps"] = True
+            try:
+                segments_iter, info = model.transcribe(str(temp_path), **transcribe_kwargs)
+            except TypeError:
+                if not word_timestamps:
+                    raise
+                transcribe_kwargs.pop("word_timestamps", None)
+                segments_iter, info = model.transcribe(str(temp_path), **transcribe_kwargs)
             segments: list[dict[str, Any]] = []
             text_parts: list[str] = []
             for segment in segments_iter:
                 segment_text = str(getattr(segment, "text", "")).strip()
                 if segment_text:
                     text_parts.append(segment_text)
-                segments.append(
-                    {
-                        "start": float(getattr(segment, "start", 0.0)),
-                        "end": float(getattr(segment, "end", 0.0)),
-                        "text": segment_text,
-                    }
-                )
+                segment_payload = {
+                    "start": float(getattr(segment, "start", 0.0)),
+                    "end": float(getattr(segment, "end", 0.0)),
+                    "text": segment_text,
+                }
+                words = _segment_words_payload(segment)
+                if words:
+                    segment_payload["words"] = words
+                segments.append(segment_payload)
             generation_seconds = time.perf_counter() - started
             return TranscriptionResult(
                 text=" ".join(text_parts).strip(),
@@ -290,19 +304,23 @@ class EngineRegistry:
                 int(24000 * _env_float("DOC_READER_TTS_SEGMENT_PAUSE_SECONDS", DEFAULT_SEGMENT_PAUSE_SECONDS)),
                 dtype="float32",
             )
-            for segment_index, segment in enumerate(
-                _tts_segments(
-                    text,
-                    max_chars=_env_int(
-                        "DOC_READER_KOKORO_MAX_SEGMENT_CHARS",
-                        DEFAULT_KOKORO_MAX_SEGMENT_CHARS,
-                    ),
-                )
+            for segment in _tts_segments(
+                text,
+                max_chars=_env_int(
+                    "DOC_READER_KOKORO_MAX_SEGMENT_CHARS",
+                    DEFAULT_KOKORO_MAX_SEGMENT_CHARS,
+                ),
             ):
-                if segment_index > 0 and silence.size:
+                segment_chunks = _kokoro_audio_chunks_for_segment(
+                    pipeline,
+                    segment,
+                    voice=voice,
+                    speed=speed,
+                    np_module=np,
+                )
+                if chunks and segment_chunks and silence.size:
                     chunks.append(silence)
-                for _graphemes, _phonemes, audio in pipeline(segment, voice=voice, speed=speed):
-                    chunks.append(np.asarray(audio, dtype="float32"))
+                chunks.extend(segment_chunks)
             if not chunks:
                 raise RuntimeError("Kokoro returned no audio.")
             combined = chunks[0] if len(chunks) == 1 else np.concatenate(chunks)
@@ -451,6 +469,7 @@ class TTSHandler(BaseHTTPRequestHandler):
                     audio=audio,
                     suffix=_suffix_from_content_type(self.headers.get("Content-Type", "")),
                     language=_optional_string(self.headers.get("X-Doc-Reader-Language")),
+                    word_timestamps=_header_flag(self.headers.get("X-Doc-Reader-Word-Timestamps")),
                 )
                 self._send_json(
                     {
@@ -592,6 +611,7 @@ def _concat_torch_audio(parts: list[Any], sample_rate: int):
 
 def _clean_text_for_tts(text: str) -> str:
     cleaned = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = _replace_tts_control_chars(cleaned)
     cleaned = re.sub(r"```.*?```", " code block omitted. ", cleaned, flags=re.DOTALL)
     cleaned = MARKDOWN_LINK_RE.sub(r"\1", cleaned)
     cleaned = URL_RE.sub(" a web link ", cleaned)
@@ -640,6 +660,110 @@ def _clean_text_for_tts(text: str) -> str:
     if cleaned and cleaned[-1] not in ".!?":
         cleaned += "."
     return cleaned
+
+
+def _kokoro_audio_chunks_for_segment(
+    pipeline: Any,
+    segment: str,
+    *,
+    voice: str,
+    speed: float,
+    np_module: Any,
+) -> list[Any]:
+    try:
+        return _collect_kokoro_audio_chunks(
+            pipeline,
+            segment,
+            voice=voice,
+            speed=speed,
+            np_module=np_module,
+        )
+    except Exception as exc:  # noqa: BLE001
+        if not _is_phonemizer_line_mismatch(exc):
+            raise
+
+        last_error: Exception = exc
+        for retry_segment in _kokoro_retry_segments(segment):
+            try:
+                chunks = _collect_kokoro_audio_chunks(
+                    pipeline,
+                    retry_segment,
+                    voice=voice,
+                    speed=speed,
+                    np_module=np_module,
+                )
+            except Exception as retry_exc:  # noqa: BLE001
+                last_error = retry_exc
+                continue
+            if chunks:
+                print(
+                    "[doc-reader-tts] recovered kokoro phonemizer line mismatch "
+                    f"chars={len(segment)} retry_chars={len(retry_segment)}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return chunks
+        raise RuntimeError(f"Kokoro phonemizer line mismatch after retry: {last_error}") from exc
+
+
+def _collect_kokoro_audio_chunks(
+    pipeline: Any,
+    segment: str,
+    *,
+    voice: str,
+    speed: float,
+    np_module: Any,
+) -> list[Any]:
+    chunks = []
+    for _graphemes, _phonemes, audio in pipeline(segment, voice=voice, speed=speed):
+        if audio is None:
+            continue
+        chunks.append(np_module.asarray(audio, dtype="float32"))
+    return chunks
+
+
+def _kokoro_retry_segments(text: str) -> list[str]:
+    safe_text = _safe_text_for_kokoro_retry(text)
+    if not safe_text:
+        return []
+    segments = _tts_segments(safe_text, max_chars=KOKORO_RETRY_MAX_SEGMENT_CHARS)
+    return list(dict.fromkeys(segment for segment in segments if segment.strip()))
+
+
+def _safe_text_for_kokoro_retry(text: str) -> str:
+    safe = _replace_tts_control_chars(text or "")
+    safe = "".join(
+        char if char.isalnum() or char.isspace() or char in ".,!?'" else " "
+        for char in safe
+    )
+    safe = re.sub(r"([.,!?]){2,}", r"\1", safe)
+    safe = re.sub(r"\s+", " ", safe)
+    safe = safe.strip(" ,.!?'")
+    if not re.search(r"\w", safe):
+        return ""
+    if safe[-1] not in ".!?":
+        safe += "."
+    return safe
+
+
+def _replace_tts_control_chars(text: str) -> str:
+    return "".join(
+        char
+        if char in "\n\t" or unicodedata.category(char) not in {"Cc", "Cf"}
+        else " "
+        for char in text
+    )
+
+
+def _is_phonemizer_line_mismatch(exc: BaseException) -> bool:
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if PHONEMIZER_LINE_MISMATCH in str(current):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _tts_segments(text: str, *, max_chars: int) -> list[str]:
@@ -767,6 +891,43 @@ def _optional_string(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _header_flag(value: object) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _segment_words_payload(segment: Any) -> list[dict[str, Any]]:
+    words = getattr(segment, "words", None)
+    if not words:
+        return []
+    payload: list[dict[str, Any]] = []
+    for word in words:
+        text = str(getattr(word, "word", "") or "").strip()
+        if not text:
+            continue
+        entry: dict[str, Any] = {"word": text}
+        start = _float_or_none(getattr(word, "start", None))
+        end = _float_or_none(getattr(word, "end", None))
+        probability = _float_or_none(getattr(word, "probability", None))
+        if start is not None:
+            entry["start"] = start
+        if end is not None:
+            entry["end"] = end
+        if probability is not None:
+            entry["probability"] = probability
+        payload.append(entry)
+    return payload
+
+
+def _float_or_none(value: object) -> float | None:
+    try:
+        parsed = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if parsed != parsed:
+        return None
+    return parsed
 
 
 def _suffix_from_content_type(content_type: str) -> str:

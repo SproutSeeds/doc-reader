@@ -11,8 +11,8 @@ dictation, and keeping the resulting material organized in one local Library.
 
 It streams `.pdf`, `.docx`, `.txt`, and `.md` files through local neural TTS,
 reads highlighted text with Right Command or Command-L, captures Option-key
-dictation through local Whisper, and keeps playback continuous by preparing
-later chunks in the background.
+dictation and uploaded audio through local Whisper, and keeps playback
+continuous by preparing later chunks in the background.
 
 ## Why this exists
 
@@ -75,9 +75,9 @@ read-docs uninstall
 ```
 
 Startup runs a tailnet orchestration pass: the web app is started, private
-Tailscale Serve is checked or configured, local Mac Kokoro starts when needed,
-and the Umbra 4090 speech service is started before Doc Reader reports full
-readiness. Use `read-docs ensure` to run that pass directly, or
+Tailscale Serve is checked or configured, local Mac Kokoro/Whisper starts when
+needed, and the Umbra 4090 speech service is started before Doc Reader reports
+full readiness. Use `read-docs ensure` to run that pass directly, or
 `read-docs doctor --json` to inspect readiness without starting dependencies.
 Opening `Doc Reader.app` runs the same readiness pass after the local web app is
 reachable, so closing and reopening the app also repairs stopped speech helpers.
@@ -98,8 +98,8 @@ read-docs web-status
 
 By default, the local service listens on `http://127.0.0.1:8766`. Tailscale
 Serve can expose the same page at `https://<this-machine>:8766` inside the
-tailnet. The web app supports document upload, text reading, Library cards,
-play, pause, resume, stop, and voice settings.
+tailnet. The web app supports document upload, audio transcription, text
+reading, Library cards, play, pause, resume, stop, and voice settings.
 
 Local-only controls:
 
@@ -136,7 +136,7 @@ read-docs tts-umbra-install
 read-docs tts-umbra-status
 ```
 
-Set up the Mac-local Kokoro service:
+Set up the Mac-local Kokoro and Whisper service:
 
 ```bash
 read-docs tts-mac-start
@@ -152,11 +152,12 @@ read-docs tts-bench
 Benchmark reports and sample audio are saved under
 `~/.doc-reader-managed/tts-benchmarks/`.
 
-## Local 4090 speech-to-text
+## Local speech-to-text
 
-Doc Reader can also use the Umbra 4090 service for local dictation through
-Whisper. This path is the default STT path, runs through Tailscale, and does not
-call an API.
+Doc Reader can also use Whisper for local dictation. It prefers the Umbra 4090
+service when that private Tailscale endpoint is reachable, then falls back to
+the Mac-local speech sidecar when it advertises Whisper. Neither path calls a
+remote API.
 
 Setup is part of the Umbra service install:
 
@@ -166,13 +167,31 @@ read-docs tts-umbra-start
 read-docs restart
 ```
 
-Open the canonical web app and confirm `Hold Option for 4090 dictation` is on.
-Choose the microphone from the Dictation settings if the system default is not
-the input you want. Put the cursor in a text field, then hold the Option/Alt key
-to record from the selected Mac microphone. Doc Reader shows a small recording
-HUD while the key is held, sends the audio to Umbra when the key is released,
-inserts the transcription at the cursor, and adds the transcription as a
-`Dictation` card in the web app.
+For a standalone MacBook without the Umbra 4090 service, start the Mac-local
+sidecar instead:
+
+```bash
+read-docs tts-mac-start
+read-docs restart
+```
+
+The Mac sidecar installs Kokoro plus `faster-whisper` and starts Whisper with a
+CPU-friendly default model. Override it before `read-docs tts-mac-start` when
+you want a larger local model:
+
+```bash
+export DOC_READER_MAC_STT_MODEL=small
+```
+
+Open the canonical web app and confirm speech-to-text is on. Add an
+audio file with the Audio picker to transcribe it into a `Dictation` card. Check
+`Timestamps` before choosing the file when you want phrase-level timestamp lines
+saved with the transcript. Choose the microphone from the Dictation settings if
+the system default is not the input you want. Put the cursor in a text field,
+then hold the Option/Alt key to record from the selected Mac microphone. Doc
+Reader shows a small recording HUD while the key is held, sends the audio to the
+active Whisper sidecar when the key is released, inserts the transcription at
+the cursor, and adds the transcription as a `Dictation` card in the web app.
 
 When a Logitech headset or mic is attached, Doc Reader pins it as the preferred
 dictation input instead of drifting back to macOS System Default during device
@@ -181,8 +200,9 @@ of name/id tokens to prefer a different dedicated microphone.
 
 The web app keeps read-aloud cards, dictation cards, and external app readings
 in one Library. Filter buttons narrow the Library to Readings, Dictations, or
-Clawdad-origin items. Dictation cards have a copy icon button; clicking it
-copies the full text and briefly switches the button to a green checkmark.
+Clawdad-origin items. Dictation cards have copy and edit icon buttons; edits
+save back to the Library card text, update search snippets and word metrics,
+and copy still briefly switches the button to a green checkmark.
 The Read Speed slider stores a per-app WPM setting and applies it to new
 read-aloud playback plus already-running readings as each next chunk is
 prepared. Playback is spoken in short live segments so speed changes are picked
@@ -212,12 +232,13 @@ not pay the model-load cost. Short warm dictations should return quickly. macOS
 may ask for microphone permission the first time the native app records audio.
 The web app shows the selected input device, microphone authorization,
 Accessibility, and Input Monitoring state. It also shows whether the native app
-helper is online; use `Start Helper` if the web page is up but the hold-Option
-listener is not running. If the HUD does not appear while Doc Reader is in the
-background, allow `Doc Reader.app` in macOS Privacy & Security for Input
-Monitoring. Accessibility is also required for automatic insertion into the
-active text field; without it, Doc Reader copies the transcription to the
-clipboard.
+helper is online. Use the in-app `Start Helper`, `Stop Helper`, and `Reset`
+controls to bring the menu-bar hotkey listener up, shut it down, or restart a
+stale helper without leaving the web app. If the HUD does not appear while Doc
+Reader is in the background, allow `Doc Reader.app` in macOS Privacy & Security
+for Input Monitoring.
+Accessibility is also required for automatic insertion into the active text
+field; without it, Doc Reader copies the transcription to the clipboard.
 
 ## Quick start: source checkout
 

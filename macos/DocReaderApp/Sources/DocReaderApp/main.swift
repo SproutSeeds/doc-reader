@@ -1643,6 +1643,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var recordingURL: URL?
     private var recordingStartedAt: Date?
     private var recordingStartPending = false
+    private var recordingStartPendingAt: Date?
+    private var dictationTranscriptionID: UUID?
+    private var dictationTranscriptionStartedAt: Date?
+    private var dictationTranscriptionWatchdog: DispatchWorkItem?
+    private var activeDictationUploadTask: URLSessionUploadTask?
+    private var activeDictationSourceURL: URL?
     private var pendingDictationStart: DispatchWorkItem?
     private var pendingDictationStop: DispatchWorkItem?
     private var pendingReadbackGesture: DispatchWorkItem?
@@ -1678,7 +1684,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let dictationStartDelaySeconds: TimeInterval = 0.16
     private let readbackGestureDelaySeconds: TimeInterval = 0.08
     private let minimumToggleStopSeconds: TimeInterval = 0.85
+    private let maximumDictationStartPendingSeconds: TimeInterval = 8
     private let maximumDictationRecordingSeconds: TimeInterval = 300
+    private let dictationTranscriptionTimeoutSeconds: TimeInterval = 120
     private let staleRecordingLevelSeconds: TimeInterval = 30
     private var selectedTextReadInProgress = false
 
@@ -1776,7 +1784,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func readSelectedText() {
-        guard audioRecorder == nil, !recordingStartPending else {
+        guard audioRecorder == nil, !recordingStartPending, dictationTranscriptionID == nil else {
             statusMenuItem.title = "Finish dictation before reading selected text."
             return
         }
@@ -1846,6 +1854,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         stopDictationRecording(send: false)
+        activeDictationUploadTask?.cancel()
+        dictationTranscriptionWatchdog?.cancel()
         fallbackWebProcess?.terminate()
     }
 
@@ -1858,6 +1868,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         dictationGestureActive = false
         dictationLatchedByRapidRelease = false
         lastDictationGestureAt = Date()
+        if audioRecorder == nil,
+           !recordingStartPending,
+           cancelDictationTranscription(reason: "transcription canceled from overlay") {
+            return
+        }
         hideRecordingOverlay()
         statusMenuItem.title = "Dictation canceled."
         logDictation("recording canceled from overlay")
@@ -1890,7 +1905,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleReadbackHotkey(_ event: NSEvent) {
-        if event.keyCode == 53, audioRecorder != nil || recordingStartPending {
+        if event.keyCode == 53, audioRecorder != nil || recordingStartPending || dictationTranscriptionID != nil {
             cancelDictationRecording()
             return
         }
@@ -2163,15 +2178,22 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             logDictation("option ignored; recorder already active or starting")
             return
         }
+        guard dictationTranscriptionID == nil else {
+            statusMenuItem.title = "Finishing previous dictation transcription."
+            logDictation("option ignored; transcription already active")
+            return
+        }
         if !CGPreflightListenEventAccess() {
             requestInputMonitoringAccessIfNeeded()
             logDictation("option event received; Input Monitoring still reports unavailable")
         }
-        recordingStartPending = true
+        setRecordingStartPending(true)
         dictationTargetApp = NSWorkspace.shared.frontmostApplication
         lastDictationEvent = "starting recorder"
-        ensureWebAppRunning { [weak self] in
-            self?.requestMicrophoneAndStartRecording()
+        publishNativeDictationStatus()
+        requestMicrophoneAndStartRecording()
+        if !isWebHealthy() {
+            ensureWebAppRunning()
         }
     }
 
@@ -2182,14 +2204,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
                 guard granted else {
-                    self.recordingStartPending = false
+                    self.setRecordingStartPending(false)
                     self.statusMenuItem.title = "Microphone access is required for dictation."
                     self.lastDictationEvent = "microphone access denied"
                     self.logDictation("microphone access denied")
                     return
                 }
                 guard self.shouldContinueDictationStart() else {
-                    self.recordingStartPending = false
+                    self.setRecordingStartPending(false)
                     self.hideRecordingOverlay()
                     self.statusMenuItem.title = "Dictation canceled."
                     self.lastDictationEvent = "start canceled before recorder opened"
@@ -2203,7 +2225,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startDictationRecording() {
         guard shouldContinueDictationStart() else {
-            recordingStartPending = false
+            setRecordingStartPending(false)
             hideRecordingOverlay()
             statusMenuItem.title = "Dictation canceled."
             lastDictationEvent = "start canceled before capture session"
@@ -2215,7 +2237,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
         do {
             guard let device = selectedMicrophoneDevice() else {
-                recordingStartPending = false
+                setRecordingStartPending(false)
                 statusMenuItem.title = "No microphone input is available."
                 lastDictationEvent = "no microphone input"
                 logDictation("no microphone input")
@@ -2231,7 +2253,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.updateDictationAudioLevel(level)
             }
             guard recorder.start() else {
-                recordingStartPending = false
+                setRecordingStartPending(false)
                 activeMicrophoneID = ""
                 statusMenuItem.title = "Could not start microphone recording."
                 lastDictationEvent = "could not start microphone recording"
@@ -2242,7 +2264,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             recordingURL = url
             recordingStartedAt = Date()
             audioRecorder = recorder
-            recordingStartPending = false
+            setRecordingStartPending(false)
             let overlayText = dictationLatchedByRapidRelease
                 ? "DocReader recording... tap Option to stop"
                 : "DocReader recording..."
@@ -2254,7 +2276,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             logDictation("recording started microphone=\(device.localizedName)")
             publishNativeDictationStatus()
         } catch {
-            recordingStartPending = false
+            setRecordingStartPending(false)
             activeMicrophoneID = ""
             statusMenuItem.title = "Recording failed: \(error.localizedDescription)"
             lastDictationEvent = "recording failed: \(error.localizedDescription)"
@@ -2265,10 +2287,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private func stopDictationRecording(send: Bool) {
         guard let recorder = audioRecorder else {
             if recordingStartPending {
-                recordingStartPending = false
+                setRecordingStartPending(false)
                 dictationLatchedByRapidRelease = false
+                dictationGestureActive = false
                 lastDictationEvent = "recording canceled before start"
                 logDictation("recording canceled before start")
+                hideRecordingOverlay()
+                publishNativeDictationStatus()
             }
             return
         }
@@ -2321,8 +2346,27 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func setRecordingStartPending(_ pending: Bool) {
+        recordingStartPending = pending
+        recordingStartPendingAt = pending ? Date() : nil
+    }
+
     private func enforceDictationRecordingSafetyLimits() {
         guard audioRecorder != nil || recordingStartPending else {
+            return
+        }
+        if recordingStartPending,
+           let pendingAt = recordingStartPendingAt,
+           Date().timeIntervalSince(pendingAt) >= maximumDictationStartPendingSeconds {
+            optionKeyWasDown = false
+            dictationGestureActive = false
+            dictationLatchedByRapidRelease = false
+            setRecordingStartPending(false)
+            lastDictationGestureAt = Date()
+            hideRecordingOverlay()
+            statusMenuItem.title = "Dictation start timed out. Tap Option again."
+            logDictation("recording start timed out")
+            publishNativeDictationStatus()
             return
         }
         let elapsed = recordingStartedAt.map { Date().timeIntervalSince($0) } ?? 0
@@ -2545,6 +2589,72 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         fflush(stderr)
     }
 
+    private func beginDictationTranscriptionWatchdog(id: UUID, sourceURL: URL) {
+        dictationTranscriptionWatchdog?.cancel()
+        dictationTranscriptionID = id
+        dictationTranscriptionStartedAt = Date()
+        activeDictationSourceURL = sourceURL
+        recordingCancelButton?.isHidden = false
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.dictationTranscriptionID == id else {
+                return
+            }
+            self.activeDictationUploadTask?.cancel()
+            self.activeDictationUploadTask = nil
+            self.dictationTranscriptionID = nil
+            self.dictationTranscriptionStartedAt = nil
+            self.dictationTranscriptionWatchdog = nil
+            self.activeDictationSourceURL = nil
+            self.hideRecordingOverlay()
+            self.statusMenuItem.title = "Dictation transcription timed out."
+            self.logDictation("transcription timed out")
+            self.dictationTargetApp = nil
+            try? FileManager.default.removeItem(at: sourceURL)
+            self.publishNativeDictationStatus()
+        }
+        dictationTranscriptionWatchdog = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + dictationTranscriptionTimeoutSeconds + 5,
+            execute: workItem
+        )
+    }
+
+    private func finishDictationTranscription(id: UUID) -> Bool {
+        guard dictationTranscriptionID == id else {
+            return false
+        }
+        dictationTranscriptionWatchdog?.cancel()
+        dictationTranscriptionWatchdog = nil
+        dictationTranscriptionID = nil
+        dictationTranscriptionStartedAt = nil
+        activeDictationUploadTask = nil
+        activeDictationSourceURL = nil
+        return true
+    }
+
+    private func cancelDictationTranscription(reason: String) -> Bool {
+        guard dictationTranscriptionID != nil else {
+            return false
+        }
+        dictationTranscriptionWatchdog?.cancel()
+        dictationTranscriptionWatchdog = nil
+        activeDictationUploadTask?.cancel()
+        activeDictationUploadTask = nil
+        dictationTranscriptionID = nil
+        dictationTranscriptionStartedAt = nil
+        if let sourceURL = activeDictationSourceURL {
+            try? FileManager.default.removeItem(at: sourceURL)
+        }
+        activeDictationSourceURL = nil
+        hideRecordingOverlay()
+        statusMenuItem.title = "Dictation canceled."
+        logDictation(reason)
+        dictationTargetApp = nil
+        publishNativeDictationStatus()
+        return true
+    }
+
     private func sendDictationAudio(_ url: URL, contentType: String = "audio/wav", elapsed: TimeInterval = 0) {
         guard let audioData = try? Data(contentsOf: url), !audioData.isEmpty else {
             hideRecordingOverlay()
@@ -2555,13 +2665,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        let transcriptionID = UUID()
+        beginDictationTranscriptionWatchdog(id: transcriptionID, sourceURL: url)
         ensureWebAppRunning { [weak self] in
             guard let self else {
                 return
             }
+            guard self.dictationTranscriptionID == transcriptionID else {
+                return
+            }
             var request = URLRequest(url: self.webURL(path: "/api/transcribe"))
             request.httpMethod = "POST"
-            request.timeoutInterval = 120
+            request.timeoutInterval = self.dictationTranscriptionTimeoutSeconds
             request.setValue(contentType, forHTTPHeaderField: "Content-Type")
             request.setValue("en", forHTTPHeaderField: "X-Doc-Reader-Language")
             if elapsed > 0 {
@@ -2570,7 +2685,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                     forHTTPHeaderField: "X-Doc-Reader-Elapsed-Seconds"
                 )
             }
-            URLSession.shared.uploadTask(with: request, from: audioData) { data, response, error in
+            let task = URLSession.shared.uploadTask(with: request, from: audioData) { data, response, error in
                 try? FileManager.default.removeItem(at: url)
                 let succeeded = (response as? HTTPURLResponse)?.statusCode == 200 && error == nil
                 let payload = data.flatMap {
@@ -2579,6 +2694,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                 let transcription = (payload?["text"] as? String ?? "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 DispatchQueue.main.async {
+                    guard self.finishDictationTranscription(id: transcriptionID) else {
+                        return
+                    }
                     self.hideRecordingOverlay()
                     if succeeded {
                         self.refreshWebState()
@@ -2602,7 +2720,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                         self.dictationTargetApp = nil
                     }
                 }
-            }.resume()
+            }
+            self.activeDictationUploadTask = task
+            task.resume()
         }
     }
 
@@ -2769,7 +2889,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         recordingWindow?.setFrame(rect, display: true)
         recordingLabel?.stringValue = text
-        recordingCancelButton?.isHidden = audioRecorder == nil && !recordingStartPending
+        recordingCancelButton?.isHidden = audioRecorder == nil
+            && !recordingStartPending
+            && dictationTranscriptionID == nil
         updateRecordingLevelMeter(dictationAudioLevel)
         recordingWindow?.makeKeyAndOrderFront(nil)
         recordingWindow?.orderFrontRegardless()

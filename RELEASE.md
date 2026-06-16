@@ -90,6 +90,22 @@ The shared tailnet readiness runtime is vendored inside the `read-docs` package
 so global installs do not depend on npm propagation or visibility for the
 scoped helper package.
 
+## 0.4.0
+
+`0.4.0` brings the application UI into the audio-transcription workflow. The web
+app now accepts uploaded audio files, can request phrase-level Whisper
+timestamps before saving an upload, stores uploaded audio transcripts as
+Dictation cards, and lets every Dictation card be edited in place with save and
+cancel controls. Saved edits update the underlying Library text, search snippet,
+text hash, local analysis queue, and STT word metrics while keeping timestamp
+labels from inflating counts. The Mac-local speech sidecar can also run Whisper
+for standalone MacBook installs, while Doc Reader still prefers Umbra 4090
+Whisper when that service is reachable. The native helper starts microphone
+capture without waiting on a full web state refresh, clears stale start-pending
+states, and the web app has a Reset control to restart the helper from the page.
+The Library refresh loop also preserves active text selection so selecting
+generated words is not interrupted by the background state poll.
+
 Before publishing:
 
 ```bash
@@ -114,7 +130,9 @@ Manual checks:
 - Dictation settings list native macOS input devices, save the selected microphone, and show Microphone, Accessibility, and Input Monitoring permission state.
 - The web app detects when the native hotkey helper is offline and can kickstart it without leaving the page.
 - Native dictation inserts returned text into the active text field and preserves the clipboard when Accessibility permission is available.
-- `read-docs tts-mac-start` provisions the Mac-local Kokoro sidecar and reports the local health endpoint.
+- `read-docs tts-mac-start` provisions the Mac-local Kokoro/Whisper sidecar and reports the local health endpoint.
+- With Umbra unavailable and Mac Whisper online, speech-to-text status reports `Mac Whisper` and `/api/transcribe` creates a `Dictation` card.
+- The web app exposes `Start Helper`, `Stop Helper`, and `Reset` controls for the native hotkey helper.
 - `read-docs tts-bench` writes Chatterbox/Kokoro/macOS speech samples and a benchmark JSON report.
 - `Read Clipboard in DocReader`, pause, and stop call the web app instead of a separate native reader.
 - Library cards persist across app restarts, and playing one card pauses any active card first.
