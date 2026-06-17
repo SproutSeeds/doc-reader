@@ -923,15 +923,6 @@ def build_speaker(
 def _auto_http_speakers(*, voice_hint: str | None, rate: int) -> list[tuple[str, Speaker]]:
     return [
         (
-            "4090 Kokoro",
-            HttpTTSSpeaker(
-                base_url=_env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL),
-                engine="kokoro",
-                voice=voice_hint,
-                rate=rate,
-            ),
-        ),
-        (
             "Mac Kokoro",
             HttpTTSSpeaker(
                 base_url=_env("DOC_READER_TTS_MAC_URL", DEFAULT_TTS_MAC_URL),
@@ -941,7 +932,16 @@ def _auto_http_speakers(*, voice_hint: str | None, rate: int) -> list[tuple[str,
             ),
         ),
         (
-            "4090 Chatterbox",
+            "Remote Kokoro",
+            HttpTTSSpeaker(
+                base_url=_env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL),
+                engine="kokoro",
+                voice=voice_hint,
+                rate=rate,
+            ),
+        ),
+        (
+            "Remote Chatterbox",
             HttpTTSSpeaker(
                 base_url=_env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL),
                 engine="chatterbox",

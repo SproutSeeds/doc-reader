@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" role="img" aria-labelledby="title desc">
-  <title id="title">Doc Reader local GPU speech workflow</title>
-  <desc id="desc">Doc Reader reads highlighted text when Right Command is pressed, turns on the microphone for local Whisper STT when ALT is held for about 1.5 seconds, and saves everything into a Library with Signal Map analysis.</desc>
+  <title id="title">Doc Reader local-first speech workflow</title>
+  <desc id="desc">Doc Reader reads highlighted text when Right Command is pressed, turns on the microphone for local speech-to-text when ALT is held for about 1.5 seconds, and saves everything into a Library with Signal Map analysis.</desc>
   <style>
     svg {
       background: #f7f8f6;
@@ -182,7 +182,7 @@
   <circle class="dot-red" cx="57" cy="55" r="6"/>
   <circle class="dot-yellow" cx="80" cy="55" r="6"/>
   <circle class="dot-green" cx="103" cy="55" r="6"/>
-  <text class="title-text" x="480" y="60" text-anchor="middle">Doc Reader - local GPU speech workspace</text>
+  <text class="title-text" x="480" y="60" text-anchor="middle">Doc Reader - local-first speech workspace</text>
 
   <text class="h1" x="58" y="116">Read, dictate, analyze locally</text>
   <text class="body" x="58" y="141">Right Command reads highlighted text. Hold ALT ~1.5s to turn on the mic.</text>
@@ -198,7 +198,7 @@
   <rect class="card" x="78" y="262" width="244" height="42" rx="8"/>
   <circle class="blue" cx="96" cy="283" r="6"/>
   <text class="body" x="112" y="280">Hold ALT for ~1.5 seconds</text>
-  <text class="small" x="112" y="296">Whisper mic turns on for STT</text>
+  <text class="small" x="112" y="296">Mac speech-to-text turns on</text>
 
   <path class="arrow" d="M356 232 C370 222 383 224 392 236" marker-end="url(#arrowhead)"/>
   <path class="arrow arrow-blue" d="M392 274 C377 286 368 286 356 280" marker-end="url(#arrowhead-blue)"/>
@@ -232,8 +232,8 @@
   <path class="arrow arrow-blue" d="M742 276 C731 289 719 289 708 272" marker-end="url(#arrowhead-blue)"/>
 
   <rect class="panel-dark" x="752" y="140" width="158" height="208" rx="14"/>
-  <text class="h2-light" x="774" y="174">Umbra 4090</text>
-  <text class="small-light" x="774" y="196">Local GPU speech</text>
+  <text class="h2-light" x="774" y="174">Local Speech</text>
+  <text class="small-light" x="774" y="196">Mac-first private audio</text>
 
   <rect class="gpu-chip" x="774" y="216" width="112" height="30" rx="8"/>
   <circle class="gpu-light" cx="793" cy="231" r="6"/>
@@ -241,19 +241,19 @@
 
   <rect class="gpu-chip" x="774" y="258" width="112" height="30" rx="8"/>
   <circle class="gpu-light" cx="793" cy="273" r="6"/>
-  <text class="body-light" x="808" y="278">Whisper</text>
+  <text class="body-light" x="808" y="278">STT</text>
 
   <rect class="gpu-chip" x="774" y="300" width="112" height="30" rx="8"/>
   <circle class="gpu-light" cx="793" cy="315" r="6"/>
   <text class="body-light" x="808" y="320">Ollama</text>
 
   <path class="wave" d="M764 111c14-20 25 20 39 0s25 20 39 0 25 20 39 0"/>
-  <text class="footer" x="512" y="374" text-anchor="middle">Local GPU default. Optional OpenAI is explicit and key-controlled.</text>
+  <text class="footer" x="512" y="374" text-anchor="middle">Mac-local default. Remote speech and OpenAI are explicit choices.</text>
 
   <g class="recording-hud">
     <rect class="panel-dark" x="72" y="326" width="236" height="48" rx="12"/>
     <circle class="dot-red" cx="93" cy="344" r="5"/>
-    <text class="small-light" x="107" y="348">DocReader recording...</text>
+    <text class="small-light" x="107" y="348">Recording...</text>
     <circle cx="285" cy="344" r="11" fill="#2c3430" stroke="#59645d"/>
     <text class="small-light" x="285" y="348" text-anchor="middle">x</text>
     <rect x="92" y="359" width="184" height="5" rx="2.5" fill="#5b655f"/>

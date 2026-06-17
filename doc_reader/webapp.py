@@ -66,6 +66,8 @@ DEFAULT_ANALYSIS_BATCH_SIZE = 12
 DEFAULT_ANALYSIS_ITEM_MAX_CHARS = 4000
 DEFAULT_ANALYSIS_TIMEOUT_SECONDS = 120
 DEFAULT_ANALYSIS_MODEL = "llama3.1:8b"
+DEFAULT_SERVICE_HEALTH_TIMEOUT_SECONDS = 0.8
+DEFAULT_WEB_SPEECH_BACKEND = "local-kokoro"
 CHUNK_START_RE = re.compile(r"^\[doc-reader\]\s+chunk-start\s+index=(\d+)\s*$")
 CHUNK_DONE_RE = re.compile(r"^\[doc-reader\]\s+chunk-done\s+index=(\d+)\s*$")
 WORD_RE = re.compile(r"[A-Za-z0-9]+(?:'[A-Za-z0-9]+)?")
@@ -74,10 +76,10 @@ NATIVE_HELPER_LABEL = "com.docreader.tray"
 NATIVE_HELPER_STALE_SECONDS = 8.0
 DEFAULT_MICROPHONE_MATCH = "logi,logitech"
 SPEECH_BACKENDS = {
-    "tailscale-4090": "Strict 4090 (Kokoro)",
+    "tailscale-4090": "Remote Kokoro (strict)",
     "auto": "Local fallback",
-    "tailscale-chatterbox": "4090 Chatterbox (experimental)",
-    "tailscale-kokoro": "4090 Kokoro",
+    "tailscale-chatterbox": "Remote Chatterbox (experimental)",
+    "tailscale-kokoro": "Remote Kokoro",
     "local-kokoro": "Mac Kokoro",
     "macsay": "macOS Voice",
     "openai": "OpenAI API",
@@ -279,16 +281,29 @@ class ReaderService:
             }
 
     def health(self) -> dict[str, Any]:
-        with self._lock:
-            return {
-                "ok": True,
-                "app": "doc-reader",
-                "tts": self.tts_status(),
-                "stt": self.stt_status(),
-                "analysis": self.analysis_status(items=self._items()),
-                "running": self._process is not None and self._process.poll() is None,
-                "paused": self._process is None and self._paused_id is not None,
-            }
+        return {
+            "ok": True,
+            "app": "doc-reader",
+            "running": self._process is not None and self._process.poll() is None,
+            "paused": self._process is None and self._paused_id is not None,
+            "stt_enabled": self._stt_enabled(),
+        }
+
+    def native_status(self) -> dict[str, Any]:
+        settings = self._settings()
+        return {
+            "ok": True,
+            "app": "doc-reader",
+            "status": self._status,
+            "running": self._process is not None and self._process.poll() is None,
+            "paused": self._process is None and self._paused_id is not None,
+            "active_id": self._active_id or self._paused_id,
+            "stt": {
+                "enabled": self._stt_enabled(),
+                "hotkey": "Option",
+                "microphone": _microphone_payload(settings),
+            },
+        }
 
     def add_text(self, text: str, *, label: str = "Text", kind: str = "text") -> HistoryItem:
         cleaned = text.strip()
@@ -904,8 +919,7 @@ class ReaderService:
 
     def stt_status(self) -> dict[str, Any]:
         stt_backend, service = _stt_service_health()
-        engines = service.get("engines", {}) if isinstance(service, dict) else {}
-        whisper = engines.get("whisper", {}) if isinstance(engines, dict) else {}
+        whisper = _service_whisper_status(service)
         settings = self._settings()
         return {
             "enabled": self._stt_enabled(),
@@ -991,7 +1005,7 @@ class ReaderService:
             normalization["source_bytes"] = source_bytes
             normalization["normalized_bytes"] = len(normalized_audio)
         transcribe_started = time.perf_counter()
-        stt_backend, stt_service = _stt_service_health()
+        stt_backend, stt_service = _require_stt_service()
         result = _transcribe_on_stt_service(
             normalized_audio,
             content_type=normalized_content_type,
@@ -1460,8 +1474,8 @@ class ReaderService:
         configured = self._settings().get("speech_backend")
         if isinstance(configured, str) and configured in SPEECH_BACKENDS:
             return configured
-        env_backend = os.getenv("DOC_READER_WEB_SPEECH_BACKEND", "tailscale-4090")
-        return env_backend if env_backend in SPEECH_BACKENDS else "tailscale-4090"
+        env_backend = os.getenv("DOC_READER_WEB_SPEECH_BACKEND", DEFAULT_WEB_SPEECH_BACKEND)
+        return env_backend if env_backend in SPEECH_BACKENDS else DEFAULT_WEB_SPEECH_BACKEND
 
     def _stt_enabled(self) -> bool:
         configured = self._settings().get("stt_enabled")
@@ -1728,6 +1742,9 @@ class DocReaderHandler(BaseHTTPRequestHandler):
             return
         if route_path == "/healthz":
             self._send_json(self.reader.health())
+            return
+        if route_path == "/api/native/status":
+            self._send_json(self.reader.native_status())
             return
         if route_path == "/api/state":
             self._send_json(self.reader.state())
@@ -2967,10 +2984,17 @@ def _read_text_file(path: Path) -> str:
         return ""
 
 
-def _service_health(base_url: str) -> dict[str, Any]:
+def _service_health(base_url: str, *, timeout: float | None = None) -> dict[str, Any]:
     started = time.perf_counter()
+    timeout_seconds = timeout
+    if timeout_seconds is None:
+        timeout_seconds = _env_float(
+            "DOC_READER_SERVICE_HEALTH_TIMEOUT_SECONDS",
+            DEFAULT_SERVICE_HEALTH_TIMEOUT_SECONDS,
+        )
+    timeout_seconds = max(0.1, min(5.0, timeout_seconds))
     try:
-        with urlrequest.urlopen(f"{base_url.rstrip('/')}/healthz", timeout=0.35) as response:
+        with urlrequest.urlopen(f"{base_url.rstrip('/')}/healthz", timeout=timeout_seconds) as response:
             payload = json.loads(response.read().decode("utf-8"))
         return {
             "ok": bool(payload.get("ok")),
@@ -2993,8 +3017,8 @@ def _stt_service_candidates() -> list[tuple[str, str]]:
     if override:
         return [("custom-whisper", override)]
     return [
-        ("tailscale-4090-whisper", _env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL)),
         ("mac-whisper", _env("DOC_READER_TTS_MAC_URL", DEFAULT_TTS_MAC_URL)),
+        ("tailscale-4090-whisper", _env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL)),
     ]
 
 
@@ -3005,10 +3029,21 @@ def _stt_default_url() -> str:
 
 def _stt_service_label(backend: str) -> str:
     if backend == "mac-whisper":
-        return "Mac Whisper"
+        return "Mac speech-to-text"
     if backend == "custom-whisper":
-        return "Whisper STT"
-    return "4090 Whisper"
+        return "Speech-to-text"
+    return "Remote speech-to-text"
+
+
+def _service_whisper_status(service: dict[str, Any]) -> dict[str, Any]:
+    engines = service.get("engines", {}) if isinstance(service, dict) else {}
+    whisper = engines.get("whisper", {}) if isinstance(engines, dict) else {}
+    return whisper if isinstance(whisper, dict) else {}
+
+
+def _service_has_whisper(service: dict[str, Any]) -> bool:
+    whisper = _service_whisper_status(service)
+    return bool(service.get("ok")) and bool(whisper.get("enabled"))
 
 
 def _stt_service_health() -> tuple[str, dict[str, Any]]:
@@ -3016,11 +3051,9 @@ def _stt_service_health() -> tuple[str, dict[str, Any]]:
     for backend, url in _stt_service_candidates():
         service = _service_health(url)
         service["stt_backend"] = backend
-        engines = service.get("engines", {}) if isinstance(service, dict) else {}
-        whisper = engines.get("whisper", {}) if isinstance(engines, dict) else {}
         if fallback is None:
             fallback = (backend, service)
-        if bool(service.get("ok")) and bool(whisper.get("enabled")):
+        if _service_has_whisper(service):
             return backend, service
     if fallback is not None:
         return fallback
@@ -3030,17 +3063,39 @@ def _stt_service_health() -> tuple[str, dict[str, Any]]:
     return backend, service
 
 
+def _require_stt_service() -> tuple[str, dict[str, Any]]:
+    backend, service = _stt_service_health()
+    if _service_has_whisper(service):
+        return backend, service
+    attempts: list[str] = []
+    for candidate_backend, candidate_url in _stt_service_candidates():
+        candidate = _service_health(candidate_url)
+        candidate["stt_backend"] = candidate_backend
+        if _service_has_whisper(candidate):
+            return candidate_backend, candidate
+        whisper = _service_whisper_status(candidate)
+        detail = str(candidate.get("error") or whisper.get("error") or "Whisper disabled")
+        attempts.append(f"{_stt_service_label(candidate_backend)} at {candidate_url}: {detail}")
+    if not attempts:
+        attempts.append("No STT services configured")
+    raise RuntimeError(
+        "No Whisper speech-to-text service is ready. "
+        "Use Reset Helper or run `read-docs tts-mac-start` to restore the Mac fallback. "
+        + " | ".join(attempts)
+    )
+
+
 def _synthesize_library_audio(text: str, *, rate: int = DEFAULT_RATE) -> bytes:
     cleaned = str(text or "").strip()
     if not cleaned:
         raise ValueError("No text to synthesize.")
-    backend = _env("DOC_READER_WEB_SPEECH_BACKEND", "tailscale-4090")
+    backend = _env("DOC_READER_WEB_SPEECH_BACKEND", DEFAULT_WEB_SPEECH_BACKEND)
     engine = "kokoro"
     urls: list[str] = []
-    if backend in {"tailscale-4090", "tailscale-kokoro", "auto"}:
-        urls.append(_env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL))
     if backend in {"local-kokoro", "auto"}:
         urls.append(_env("DOC_READER_TTS_MAC_URL", DEFAULT_TTS_MAC_URL))
+    if backend in {"tailscale-4090", "tailscale-kokoro", "auto"}:
+        urls.append(_env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL))
     if backend == "tailscale-chatterbox":
         urls.append(_env("DOC_READER_TTS_UMBRA_URL", DEFAULT_TTS_UMBRA_URL))
         engine = "chatterbox"
@@ -3350,6 +3405,16 @@ def _env_int(name: str, default: int) -> int:
         return default
     try:
         return int(value)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return default
+    try:
+        return float(value)
     except ValueError:
         return default
 
@@ -4557,9 +4622,9 @@ INDEX_HTML = r"""<!doctype html>
       }
       voiceEl.value = current;
       const services = tts.services || {};
-      const umbra = services.umbra && services.umbra.ok ? "4090 online" : "4090 offline";
-      const mac = services.mac && services.mac.ok ? "Mac neural online" : "Mac neural offline";
-      voiceStatusEl.textContent = `${tts.label || current} / ${umbra} / ${mac}`;
+      const remoteSpeech = services.umbra && services.umbra.ok ? "remote speech online" : "remote speech offline";
+      const localSpeech = services.mac && services.mac.ok ? "local speech online" : "local speech offline";
+      voiceStatusEl.textContent = `${tts.label || current} / ${localSpeech} / ${remoteSpeech}`;
     }
 
     function normalizeReadRate(value) {
@@ -4586,9 +4651,11 @@ INDEX_HTML = r"""<!doctype html>
     function renderDictation(stt) {
       dictationEnabledEl.checked = !!stt.enabled;
       const service = stt.service || {};
-      const backendLabel = stt.backend === "mac-whisper" ? "Mac" : "4090";
+      const backendLabel = stt.backend === "mac-whisper"
+        ? "local speech"
+        : (stt.backend === "custom-whisper" ? "speech service" : "remote speech");
       const serviceLabel = service.ok ? `${backendLabel} online` : `${backendLabel} offline`;
-      const modelLabel = stt.loaded ? "model loaded" : (stt.ready ? "model ready" : "model unavailable");
+      const modelLabel = stt.loaded ? "speech loaded" : (stt.ready ? "speech ready" : "speech unavailable");
       const mic = stt.microphone || {};
       renderMicrophones(mic);
       renderNativeHelperToggle(mic);
@@ -4600,7 +4667,7 @@ INDEX_HTML = r"""<!doctype html>
             : (state.nativeHelperAction || (mic.native_helper_online ? "helper online" : "helper offline"))
         );
       const inputLabel = mic.input_monitoring_trusted ? "hotkey allowed" : "allow Input Monitoring";
-      dictationStatusEl.textContent = `${stt.label || "4090 Whisper"} / ${serviceLabel} / ${modelLabel} / ${helperLabel} / ${inputLabel}`;
+      dictationStatusEl.textContent = `${stt.label || "Speech-to-text"} / ${serviceLabel} / ${modelLabel} / ${helperLabel} / ${inputLabel}`;
       const level = Math.max(0, Math.min(1, Number(mic.audio_level || 0)));
       const peak = Math.max(0, Math.min(1, Number(mic.audio_peak_level || 0)));
       dictationMeterEl.style.setProperty("--level", String(level));
@@ -4613,7 +4680,7 @@ INDEX_HTML = r"""<!doctype html>
     function renderAudioFileStatus(stt) {
       const busy = !!state.audioFileAction;
       const available = !!stt.enabled && !!stt.ready;
-      const label = stt.label || "Whisper";
+      const label = stt.label || "Speech-to-text";
       audioFileEl.disabled = busy || !available;
       audioFileStatusEl.textContent = state.audioFileAction || (
         available ? `${label} ready` : (stt.enabled ? `${label} unavailable` : "Speech-to-text off")

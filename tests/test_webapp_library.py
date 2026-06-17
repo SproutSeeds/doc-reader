@@ -14,22 +14,26 @@ from doc_reader.webapp import INDEX_HTML, ReaderService
 
 class FakeSpeechHandler(BaseHTTPRequestHandler):
     calls: list[dict[str, object]] = []
+    health_payload: dict[str, object] | None = None
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/healthz":
-            self._json({
-                "ok": True,
-                "engines": {
-                    "kokoro": {
-                        "enabled": True,
-                        "loaded": True,
+            self._json(
+                self.health_payload
+                or {
+                    "ok": True,
+                    "engines": {
+                        "kokoro": {
+                            "enabled": True,
+                            "loaded": True,
+                        },
+                        "whisper": {
+                            "enabled": True,
+                            "loaded": True,
+                        },
                     },
-                    "whisper": {
-                        "enabled": True,
-                        "loaded": True,
-                    },
-                },
-            })
+                }
+            )
             return
         self.send_error(404)
 
@@ -99,6 +103,7 @@ class FakeSpeechHandler(BaseHTTPRequestHandler):
 class WebappLibraryTests(unittest.TestCase):
     def setUp(self) -> None:
         FakeSpeechHandler.calls = []
+        FakeSpeechHandler.health_payload = None
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), FakeSpeechHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -181,6 +186,55 @@ class WebappLibraryTests(unittest.TestCase):
         self.assertIn('id="nativeHelperReset"', INDEX_HTML)
         self.assertIn("/api/native/reset", INDEX_HTML)
 
+    def test_speech_status_copy_uses_neutral_service_labels(self) -> None:
+        self.assertIn("local speech online", INDEX_HTML)
+        self.assertIn("remote speech online", INDEX_HTML)
+        self.assertIn("speech ready", INDEX_HTML)
+        self.assertIn("Speech-to-text", INDEX_HTML)
+        self.assertNotIn("4090 online", INDEX_HTML)
+        self.assertNotIn("4090 Whisper", INDEX_HTML)
+        self.assertNotIn("Transcribing on 4090", INDEX_HTML)
+        self.assertNotIn("model ready", INDEX_HTML)
+
+    def test_native_status_is_lightweight_and_reflects_stt_toggle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            reader = ReaderService(Path(directory))
+
+            enabled_status = reader.native_status()
+            self.assertTrue(enabled_status["stt"]["enabled"])
+            self.assertNotIn("library", enabled_status)
+            self.assertNotIn("tts", enabled_status)
+
+            reader.update_settings({"stt_enabled": False})
+            disabled_status = reader.native_status()
+
+            self.assertFalse(disabled_status["stt"]["enabled"])
+            self.assertEqual(disabled_status["stt"]["hotkey"], "Option")
+
+    def test_default_tts_backend_is_mac_local(self) -> None:
+        old_backend = os.environ.pop("DOC_READER_WEB_SPEECH_BACKEND", None)
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                reader = ReaderService(Path(directory))
+
+                status = reader.tts_status()
+
+                self.assertEqual(status["backend"], "local-kokoro")
+                self.assertEqual(status["label"], "Mac Kokoro")
+        finally:
+            if old_backend is not None:
+                os.environ["DOC_READER_WEB_SPEECH_BACKEND"] = old_backend
+
+    def test_stt_prefers_mac_whisper_when_both_services_are_available(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            reader = ReaderService(Path(directory))
+
+            status = reader.stt_status()
+
+            self.assertEqual(status["backend"], "mac-whisper")
+            self.assertEqual(status["label"], "Mac speech-to-text")
+            self.assertTrue(status["ready"])
+
     def test_metrics_split_stt_and_tts_words(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             reader = ReaderService(Path(directory))
@@ -253,7 +307,7 @@ class WebappLibraryTests(unittest.TestCase):
 
                 status = reader.stt_status()
                 self.assertEqual(status["backend"], "mac-whisper")
-                self.assertEqual(status["label"], "Mac Whisper")
+                self.assertEqual(status["label"], "Mac speech-to-text")
                 self.assertTrue(status["ready"])
 
                 result = reader.transcribe_audio_file(
@@ -262,7 +316,7 @@ class WebappLibraryTests(unittest.TestCase):
                     content_type="audio/mp4",
                 )
 
-                self.assertEqual(result["transcription"]["service_label"], "Mac Whisper")
+                self.assertEqual(result["transcription"]["service_label"], "Mac speech-to-text")
                 self.assertEqual(FakeSpeechHandler.calls[-1]["path"], "/v1/audio/transcriptions")
         finally:
             if old_umbra is None:
@@ -273,6 +327,34 @@ class WebappLibraryTests(unittest.TestCase):
                 os.environ.pop("DOC_READER_TTS_MAC_URL", None)
             else:
                 os.environ["DOC_READER_TTS_MAC_URL"] = old_mac
+
+    def test_stt_refuses_service_without_whisper(self) -> None:
+        FakeSpeechHandler.health_payload = {
+            "ok": True,
+            "engines": {
+                "kokoro": {
+                    "enabled": True,
+                    "loaded": True,
+                },
+                "whisper": {
+                    "enabled": False,
+                    "loaded": False,
+                },
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            reader = ReaderService(Path(directory))
+
+            with self.assertRaisesRegex(RuntimeError, "No Whisper speech-to-text service is ready"):
+                reader.transcribe_audio_file(
+                    "meeting.m4a",
+                    b"fake audio bytes",
+                    content_type="audio/mp4",
+                )
+
+        self.assertFalse(
+            any(call.get("path") == "/v1/audio/transcriptions" for call in FakeSpeechHandler.calls)
+        )
 
     def test_dictation_card_text_can_be_edited(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

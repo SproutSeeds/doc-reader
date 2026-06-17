@@ -1,6 +1,15 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, lstatSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -33,6 +42,8 @@ const ttsMacSttComputeType = process.env.DOC_READER_MAC_STT_COMPUTE_TYPE || proc
 const ttsUmbraUrl = process.env.DOC_READER_TTS_UMBRA_URL || "http://100.72.151.28:8771";
 const ttsUmbraHost = process.env.DOC_READER_UMBRA_SSH_HOST || "Umbra";
 const ttsUmbraRoot = process.env.DOC_READER_UMBRA_TTS_ROOT || "C:/Users/codyr/.doc-reader-tts";
+const shouldAutoStartRemoteSpeech = process.env.DOC_READER_REMOTE_SPEECH_AUTOSTART === "1";
+const shouldCheckRemoteSpeech = shouldAutoStartRemoteSpeech || process.env.DOC_READER_REMOTE_SPEECH_CHECK === "1";
 const ttsLaunchAgentLabel = "com.docreader.tts-local";
 const ttsLaunchAgentPlist = join(homedir(), "Library", "LaunchAgents", `${ttsLaunchAgentLabel}.plist`);
 const ttsStdoutLog = join(homedir(), "Library", "Logs", "doc-reader-tts-local.log");
@@ -40,6 +51,7 @@ const ttsStderrLog = join(homedir(), "Library", "Logs", "doc-reader-tts-local.er
 const ttsLocalRoot = join(managedRoot, "tts-local");
 const ttsLocalVenv = join(ttsLocalRoot, ".venv");
 const ttsLocalPython = join(ttsLocalVenv, "bin", "python");
+const ttsMacEngines = "kokoro,whisper";
 const launchServicesRegister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 const spacyEnglishModelUrl = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl";
 const cacheRoot =
@@ -76,13 +88,13 @@ macOS app bootstrapper:
   read-docs web-stop         Stop the local web app agent
   read-docs web-status       Show local web app health
   read-docs tailscale        Start web app and expose it on the tailnet at :${webPort}
-  read-docs tts-umbra-install Install/update the 4090 Kokoro/Whisper service
-  read-docs tts-umbra-start   Start the 4090 speech service on Umbra
-  read-docs tts-umbra-stop    Stop the 4090 speech service on Umbra
-  read-docs tts-umbra-status  Show the 4090 speech service health
-  read-docs tts-mac-start     Install/start local Mac Kokoro service
-  read-docs tts-mac-stop      Stop local Mac Kokoro service
-  read-docs tts-mac-status    Show local Mac Kokoro service health
+  read-docs tts-umbra-install Install/update the remote speech service
+  read-docs tts-umbra-start   Start the remote speech service
+  read-docs tts-umbra-stop    Stop the remote speech service
+  read-docs tts-umbra-status  Show remote speech service health
+  read-docs tts-mac-start     Install/start local Mac Kokoro/Whisper service
+  read-docs tts-mac-stop      Stop local Mac Kokoro/Whisper service
+  read-docs tts-mac-status    Show local Mac Kokoro/Whisper service health
   read-docs tts-status        Show all DocReader TTS service health
   read-docs tts-bench         Benchmark Chatterbox/Kokoro/macOS voices
   read-docs tts-samples       Generate benchmark sample audio files
@@ -517,9 +529,10 @@ async function installApp() {
   const dockExitCode = applicationsAppState() === "installed" ? 0 : installApplicationsApp();
   const serviceExitCode = await runScript("install-context-menu-service");
   const webExitCode = await startWebAgent();
+  const macSpeechExitCode = await refreshMacSpeechLaunchAgentIfNeeded();
   await ensureDocReaderReadiness({ startDependencies: true, quiet: false });
   const nativeCleanupExitCode = await cleanupNativeAppProcesses({ keepLaunchAgent: true });
-  return dockExitCode || serviceExitCode || webExitCode || nativeCleanupExitCode;
+  return dockExitCode || serviceExitCode || webExitCode || macSpeechExitCode || nativeCleanupExitCode;
 }
 
 async function restartApp() {
@@ -534,9 +547,10 @@ async function restartApp() {
   registerInstalledApp();
   const dockExitCode = applicationsAppState() === "installed" ? 0 : installApplicationsApp();
   const webExitCode = await startWebAgent();
+  const macSpeechExitCode = await refreshMacSpeechLaunchAgentIfNeeded();
   await ensureDocReaderReadiness({ startDependencies: true, quiet: false });
   const nativeCleanupExitCode = await cleanupNativeAppProcesses({ keepLaunchAgent: true });
-  return dockExitCode || webExitCode || nativeCleanupExitCode;
+  return dockExitCode || webExitCode || macSpeechExitCode || nativeCleanupExitCode;
 }
 
 async function startAgent() {
@@ -549,6 +563,7 @@ async function startAgent() {
     return 1;
   }
   const webExitCode = await startWebAgent();
+  const macSpeechExitCode = await refreshMacSpeechLaunchAgentIfNeeded();
   await ensureDocReaderReadiness({ startDependencies: true, quiet: false });
   if (!isLaunchAgentLoaded()) {
     const bootstrapExitCode = await run("launchctl", [
@@ -565,7 +580,7 @@ async function startAgent() {
   });
   const agentExitCode = await run("launchctl", ["kickstart", "-k", launchAgentTarget()]);
   const nativeCleanupExitCode = await cleanupNativeAppProcesses({ keepLaunchAgent: true });
-  return webExitCode || agentExitCode || nativeCleanupExitCode;
+  return webExitCode || macSpeechExitCode || agentExitCode || nativeCleanupExitCode;
 }
 
 async function stopAgent() {
@@ -697,7 +712,7 @@ function writeTtsLaunchAgent() {
       <string>--port</string>
       <string>${ttsMacPort}</string>
       <string>--engines</string>
-      <string>kokoro,whisper</string>
+      <string>${ttsMacEngines}</string>
       <string>--device</string>
       <string>${ttsMacDevice}</string>
     </array>
@@ -739,6 +754,30 @@ function writeTtsLaunchAgent() {
 </plist>
 `;
   writeFileSync(ttsLaunchAgentPlist, plist);
+}
+
+function macSpeechLaunchAgentNeedsRefresh() {
+  if (!existsSync(ttsLaunchAgentPlist)) {
+    return false;
+  }
+  try {
+    const plist = readFileSync(ttsLaunchAgentPlist, "utf8");
+    return (
+      !plist.includes(`<string>${ttsMacEngines}</string>`) ||
+      !plist.includes("<key>DOC_READER_STT_MODEL</key>") ||
+      !plist.includes("<key>DOC_READER_STT_COMPUTE_TYPE</key>")
+    );
+  } catch (_error) {
+    return true;
+  }
+}
+
+async function refreshMacSpeechLaunchAgentIfNeeded() {
+  if (!macSpeechLaunchAgentNeedsRefresh()) {
+    return 0;
+  }
+  console.log("[doc-reader] Refreshing Mac speech service for local Whisper fallback.");
+  return startMacTts();
 }
 
 async function ensureMacTtsRuntime() {
@@ -1007,26 +1046,32 @@ function docReaderTailnetDependencies({ startDependencies }) {
   const selfCommand = fileURLToPath(import.meta.url);
   const dependencies = [
     {
-      name: "umbra-4090-speech",
-      healthUrl: `${ttsUmbraUrl.replace(/\/$/, "")}/healthz`,
-      required: true,
-      feature: "strict 4090 text-to-speech and Whisper dictation",
-      timeoutMs: 30000,
-    },
-    {
-      name: "mac-kokoro",
+      name: "mac-speech",
       healthUrl: `${ttsMacUrl.replace(/\/$/, "")}/healthz`,
-      required: false,
-      feature: "Mac-local TTS fallback",
+      required: true,
+      feature: "Mac-local speech",
       timeoutMs: 45000,
     },
   ];
 
+  if (shouldCheckRemoteSpeech) {
+    const remoteSpeech = {
+      name: "remote-speech",
+      healthUrl: `${ttsUmbraUrl.replace(/\/$/, "")}/healthz`,
+      required: false,
+      feature: "remote speech service",
+      timeoutMs: 30000,
+    };
+    if (startDependencies && shouldAutoStartRemoteSpeech) {
+      remoteSpeech.autoStart = true;
+      remoteSpeech.startCommand = [process.execPath, selfCommand, "tts-umbra-start"];
+    }
+    dependencies.push(remoteSpeech);
+  }
+
   if (startDependencies) {
     dependencies[0].autoStart = true;
-    dependencies[0].startCommand = [process.execPath, selfCommand, "tts-umbra-start"];
-    dependencies[1].autoStart = true;
-    dependencies[1].startCommand = [process.execPath, selfCommand, "tts-mac-start"];
+    dependencies[0].startCommand = [process.execPath, selfCommand, "tts-mac-start"];
   }
 
   return dependencies;

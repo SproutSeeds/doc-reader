@@ -87,9 +87,9 @@ private struct ReaderPreferences {
     private static let defaultOpenAIInstructions =
         "Read clearly at a natural pace with a calm, focused delivery for document narration."
     static let speechBackendOptions: [(title: String, value: String)] = [
-        ("Strict 4090 (Kokoro)", "tailscale-4090"),
-        ("4090 Kokoro", "tailscale-kokoro"),
-        ("4090 Chatterbox (experimental)", "tailscale-chatterbox"),
+        ("Remote Kokoro (strict)", "tailscale-4090"),
+        ("Remote Kokoro", "tailscale-kokoro"),
+        ("Remote Chatterbox (experimental)", "tailscale-chatterbox"),
         ("Mac Kokoro", "local-kokoro"),
         ("System Voice", "macsay"),
         ("OpenAI API", "openai"),
@@ -147,14 +147,14 @@ private struct ReaderPreferences {
     }
 
     static var speechBackend: String {
-        let value = defaults.string(forKey: "speech.backend") ?? "tailscale-4090"
+        let value = defaults.string(forKey: "speech.backend") ?? "local-kokoro"
         if value == "elevenlabs" {
             return "openai"
         }
         if value == "pyttsx3" {
             return "macsay"
         }
-        return speechBackendValues.contains(value) ? value : "tailscale-4090"
+        return speechBackendValues.contains(value) ? value : "local-kokoro"
     }
 
     static var openAIModel: String {
@@ -1952,7 +1952,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                     dictationLatchedByRapidRelease = true
                     optionKeyWasDown = false
                     dictationGestureActive = true
-                    showRecordingOverlay(text: "DocReader recording... tap Option to stop")
+                    showRecordingOverlay(text: "Recording... tap Option to stop")
                     statusMenuItem.title = "Recording dictation. Tap Option to stop."
                     logDictation("ignored rapid option stop")
                     publishNativeDictationStatus(activeMicrophoneID: selectedMicrophoneDevice()?.uniqueID ?? "")
@@ -2116,7 +2116,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             if self.audioRecorder != nil || self.recordingStartPending {
                 self.dictationLatchedByRapidRelease = true
                 self.dictationGestureActive = true
-                self.showRecordingOverlay(text: "DocReader recording... tap Option to stop")
+                self.showRecordingOverlay(text: "Recording... tap Option to stop")
                 self.statusMenuItem.title = "Recording dictation. Tap Option to stop."
                 self.logDictation("option release ignored; recording latched")
                 self.publishNativeDictationStatus(activeMicrophoneID: self.selectedMicrophoneDevice()?.uniqueID ?? "")
@@ -2169,9 +2169,23 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             || isOptionKeyCurrentlyDown()
     }
 
-    private func startDictationRecordingIfEnabled() {
+    private func startDictationRecordingIfEnabled(allowStateRefresh: Bool = true) {
         guard dictationEnabled else {
-            logDictation("option ignored; dictation disabled")
+            if allowStateRefresh {
+                logDictation("option requested; refreshing dictation enabled state")
+                refreshWebState { [weak self] in
+                    guard let self else {
+                        return
+                    }
+                    if self.dictationEnabled {
+                        self.startDictationRecordingIfEnabled(allowStateRefresh: false)
+                    } else {
+                        self.logDictation("option ignored; dictation disabled")
+                    }
+                }
+            } else {
+                logDictation("option ignored; dictation disabled")
+            }
             return
         }
         guard audioRecorder == nil, !recordingStartPending else {
@@ -2266,8 +2280,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             audioRecorder = recorder
             setRecordingStartPending(false)
             let overlayText = dictationLatchedByRapidRelease
-                ? "DocReader recording... tap Option to stop"
-                : "DocReader recording..."
+                ? "Recording... tap Option to stop"
+                : "Recording..."
             showRecordingOverlay(text: overlayText)
             statusMenuItem.title = dictationLatchedByRapidRelease
                 ? "Recording dictation. Tap Option to stop."
@@ -2331,8 +2345,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                     contentType: "audio/wav",
                     microphoneID: recordedMicrophoneID
                 )
-                self.showRecordingOverlay(text: "Transcribing on 4090...")
-                self.statusMenuItem.title = "Transcribing on 4090..."
+                self.showRecordingOverlay(text: "Transcribing...")
+                self.statusMenuItem.title = "Transcribing..."
                 self.lastDictationEvent = String(format: "transcribing %.2fs recording", elapsed)
                 self.logDictation(String(format: "recording stopped; transcribing elapsed=%.2fs peak_level=%.2f", elapsed, peakLevel))
                 self.sendDictationAudio(url, contentType: "audio/wav", elapsed: elapsed)
@@ -2382,7 +2396,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if audioRecorder != nil,
            Date().timeIntervalSince(lastDictationAudioLevelAt) >= staleRecordingLevelSeconds {
-            showRecordingOverlay(text: "DocReader recording... tap Option, Esc, or x to stop")
+            showRecordingOverlay(text: "Recording... tap Option, Esc, or x to stop")
             statusMenuItem.title = "Recording dictation. Tap Option, Esc, or x to stop."
             publishNativeDictationStatus(activeMicrophoneID: selectedMicrophoneDevice()?.uniqueID ?? "")
         }
@@ -3002,14 +3016,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func ensureFallbackStartupDependencies() {
         kickstartMacTtsLaunchAgent()
-        ensureUmbraTtsRunning()
+        if shouldAutoStartRemoteSpeech {
+            ensureUmbraTtsRunning()
+        }
+    }
+
+    private var shouldAutoStartRemoteSpeech: Bool {
+        ProcessInfo.processInfo.environment["DOC_READER_REMOTE_SPEECH_AUTOSTART"] == "1"
     }
 
     private func ensureUmbraTtsRunning() {
         if isHealthEndpointReady(umbraTtsHealthURL, timeoutInterval: 1.0) {
             return
         }
-        setStatusMenuTitle("Starting Umbra 4090 speech...")
+        setStatusMenuTitle("Starting remote speech service...")
         let environment = startupOrchestrationEnvironment()
         let stopCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"\(umbraTtsRootWindowsPath)\\stop-tts.ps1\""
         _ = runProcess(
@@ -3107,7 +3127,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshWebState(completion: (() -> Void)? = nil) {
-        var request = URLRequest(url: webURL(path: "/api/state"))
+        var request = URLRequest(url: webURL(path: "/api/native/status"))
         request.timeoutInterval = 1.0
         URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
             guard let self else {

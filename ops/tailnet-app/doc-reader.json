@@ -11,21 +11,12 @@
   "allowFunnel": false,
   "dependencies": [
     {
-      "name": "umbra-4090-speech",
-      "healthUrl": "http://100.72.151.28:8771/healthz",
+      "name": "mac-speech",
+      "healthUrl": "http://127.0.0.1:8772/healthz",
       "required": true,
       "autoStart": true,
-      "startCommand": ["read-docs", "tts-umbra-start"],
-      "feature": "strict 4090 text-to-speech and Whisper dictation",
-      "timeoutMs": 30000
-    },
-    {
-      "name": "mac-kokoro",
-      "healthUrl": "http://127.0.0.1:8772/healthz",
-      "required": false,
-      "autoStart": true,
       "startCommand": ["read-docs", "tts-mac-start"],
-      "feature": "Mac-local TTS fallback",
+      "feature": "Mac-local speech",
       "timeoutMs": 45000
     }
   ],

@@ -76,9 +76,9 @@ OPENAI_TTS_VOICE_LABELS = [
 ]
 SYSTEM_BACKEND = "macsay" if sys.platform == "darwin" else "pyttsx3"
 LOCAL_TTS_OPTIONS = [
-    ("Strict 4090 (Kokoro)", "tailscale-4090"),
-    ("4090 Kokoro", "tailscale-kokoro"),
-    ("4090 Chatterbox (experimental)", "tailscale-chatterbox"),
+    ("Remote Kokoro (strict)", "tailscale-4090"),
+    ("Remote Kokoro", "tailscale-kokoro"),
+    ("Remote Chatterbox (experimental)", "tailscale-chatterbox"),
     ("Mac Kokoro", "local-kokoro"),
 ]
 DEFAULT_SELECTION_SHORTCUT = "<ctrl>+<alt>+<cmd>+r"
@@ -1714,7 +1714,7 @@ class ReaderPanel(QWidget):
                 index = self._find_first_voice_index(saved_backend)
 
         if index < 0:
-            index = self._find_first_voice_index("tailscale-4090")
+            index = self._find_first_voice_index("local-kokoro")
 
         if index < 0:
             index = self._find_first_voice_index(SYSTEM_BACKEND)

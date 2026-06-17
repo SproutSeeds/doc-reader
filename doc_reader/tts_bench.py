@@ -14,7 +14,7 @@ from urllib import error, request
 
 
 DEFAULT_TEXT = (
-    "Doc Reader is testing local speech generation across the 4090 and the Mac. "
+    "Doc Reader is testing local speech generation across remote and Mac speech services. "
     "This sample should be long enough to measure latency, but short enough to run quickly."
 )
 DEFAULT_UMBRA_URL = "http://100.72.151.28:8771"

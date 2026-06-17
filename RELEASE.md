@@ -1,5 +1,15 @@
 # Release Checklist
 
+## 0.4.1
+
+`0.4.1` makes the shipped npm app Mac-local first. App playback defaults to Mac
+Kokoro, dictation defaults to Mac speech-to-text, and remote speech startup is
+opt-in with `DOC_READER_REMOTE_SPEECH_AUTOSTART=1`. The web status line, native
+recording HUD, README animation, package metadata, and voice menu labels now use
+neutral local/remote speech language instead of hardware-specific 4090 copy.
+Startup no longer blocks standalone MacBook installs on an unavailable remote
+speech host, while the existing remote backend IDs remain compatible.
+
 ## 0.1.1
 
 `0.1.1` is the first macOS-first native-wrapper release.
@@ -124,21 +134,21 @@ Manual checks:
 - `~/Applications/Doc Reader.app` is created with the Doc Reader icon, registered with Launch Services, and usable from Applications, Spotlight, and the Dock.
 - `read-docs install` and `read-docs restart` start the web app agent as part of the normal app lifecycle.
 - `read-docs tailscale` starts the web app agent and exposes `127.0.0.1:8766` on the tailnet.
-- `read-docs tts-umbra-install` provisions `DocReaderTTS` on Umbra and reports the RTX 4090 health endpoint.
-- The Umbra health endpoint reports `whisper.enabled=true` after `read-docs tts-umbra-install`.
-- The web app can enable `Hold Option for 4090 dictation`, and `/api/transcribe` creates a copyable `Dictation` card with no OpenAI key.
+- `read-docs tts-umbra-install` provisions the optional remote speech service and reports its health endpoint.
+- The remote health endpoint reports `whisper.enabled=true` after `read-docs tts-umbra-install`.
+- The web app can enable speech-to-text, and `/api/transcribe` creates a copyable `Dictation` card with no OpenAI key.
 - Dictation settings list native macOS input devices, save the selected microphone, and show Microphone, Accessibility, and Input Monitoring permission state.
 - The web app detects when the native hotkey helper is offline and can kickstart it without leaving the page.
 - Native dictation inserts returned text into the active text field and preserves the clipboard when Accessibility permission is available.
 - `read-docs tts-mac-start` provisions the Mac-local Kokoro/Whisper sidecar and reports the local health endpoint.
-- With Umbra unavailable and Mac Whisper online, speech-to-text status reports `Mac Whisper` and `/api/transcribe` creates a `Dictation` card.
+- With remote speech unavailable and Mac speech-to-text online, `/api/transcribe` creates a `Dictation` card.
 - The web app exposes `Start Helper`, `Stop Helper`, and `Reset` controls for the native hotkey helper.
 - `read-docs tts-bench` writes Chatterbox/Kokoro/macOS speech samples and a benchmark JSON report.
 - `Read Clipboard in DocReader`, pause, and stop call the web app instead of a separate native reader.
 - Library cards persist across app restarts, and playing one card pauses any active card first.
 - Pause and Resume restore the saved chunk for a document or text card.
-- Default app playback uses strict private 4090 Kokoro with no API fallback.
-- Local fallback mode prefers private 4090 Kokoro, then Mac Kokoro, then 4090 Chatterbox, then macOS system speech.
+- Default app playback uses Mac Kokoro with no API fallback.
+- Local fallback mode prefers Mac Kokoro, then remote Kokoro, then remote Chatterbox, then macOS system speech.
 - Neural sidecar input is cleaned and split before synthesis to keep Markdown-heavy selections from drifting into repeated nonsense.
 - OpenAI text-to-speech works only when explicitly selected with an environment, Doc Reader Keychain, or ORP Keychain key.
 - The package contains no real API keys or local env files.

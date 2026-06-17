@@ -1,7 +1,7 @@
 {
   "name": "read-docs",
-  "version": "0.4.0",
-  "description": "macOS local GPU speech workspace for document reading, dictation, and library analysis.",
+  "version": "0.4.1",
+  "description": "macOS local-first speech workspace for document reading, dictation, and library analysis.",
   "license": "MIT",
   "type": "module",
   "bin": {
