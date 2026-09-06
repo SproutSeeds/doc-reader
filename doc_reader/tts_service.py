@@ -18,6 +18,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from .local_voices import MODELS, POCKET_LANGUAGES, catalog, validate_voice
+
 
 DEFAULT_ENGINES = ("chatterbox", "kokoro")
 DEFAULT_KOKORO_VOICE = "af_heart"
@@ -65,6 +67,12 @@ class EngineRegistry:
         self._lock = threading.RLock()
         self._chatterbox_model: Any | None = None
         self._kokoro_pipeline: Any | None = None
+        self._kokoro_pipelines: dict[str, Any] = {}
+        self._pocket_model: Any | None = None
+        self._pocket_language = ""
+        self._pocket_voices: dict[str, Any] = {}
+        self._kitten_model: Any | None = None
+        self._synthesis_lock = threading.RLock()
         self._whisper_model: Any | None = None
         self._load_errors: dict[str, str] = {}
 
@@ -131,6 +139,8 @@ class EngineRegistry:
                 "engines": {
                     "chatterbox": self._engine_payload("chatterbox", self._chatterbox_model),
                     "kokoro": self._engine_payload("kokoro", self._kokoro_pipeline),
+                    "pocket": self._engine_payload("pocket", self._pocket_model),
+                    "kitten": self._engine_payload("kitten", self._kitten_model),
                     "whisper": self._engine_payload("whisper", self._whisper_model),
                 },
             }
@@ -154,7 +164,11 @@ class EngineRegistry:
         if normalized == "chatterbox":
             return self._synthesize_chatterbox(cleaned, voice or DEFAULT_CHATTERBOX_VOICE)
         if normalized == "kokoro":
-            return self._synthesize_kokoro(cleaned, voice or DEFAULT_KOKORO_VOICE, speed=normalized_speed)
+            with self._synthesis_lock:
+                return self._synthesize_kokoro(cleaned, validate_voice(normalized, voice), speed=normalized_speed)
+        if normalized in ("pocket", "kitten"):
+            with self._synthesis_lock:
+                return self._synthesize_local(normalized, cleaned, validate_voice(normalized, voice), speed=normalized_speed)
         raise ValueError(f"Unsupported engine: {normalized}")
 
     def transcribe(
@@ -294,7 +308,7 @@ class EngineRegistry:
 
     def _synthesize_kokoro(self, text: str, voice: str, *, speed: float = 1.0) -> SynthesisResult:
         started = time.perf_counter()
-        pipeline = self._load_kokoro()
+        pipeline = self._load_kokoro(voice[0])
         try:
             import numpy as np
             import soundfile as sf
@@ -354,17 +368,53 @@ class EngineRegistry:
                 self._load_errors["chatterbox"] = message
                 raise RuntimeError(f"Unable to load Chatterbox: {message}") from exc
 
-    def _load_kokoro(self) -> Any:
+    def _synthesize_local(self, engine: str, text: str, voice: str, *, speed: float) -> SynthesisResult:
+        import numpy as np
+        import soundfile as sf
+        started = time.perf_counter()
+        if engine == "pocket":
+            if speed != 1.0:
+                raise ValueError("Pocket TTS uses the selected voice's natural speaking pace.")
+            from pocket_tts import TTSModel
+            language = POCKET_LANGUAGES.get(voice, ("english", "English"))[0]
+            if self._pocket_model is None or self._pocket_language != language:
+                self._pocket_model = None
+                self._pocket_voices.clear()
+                self._pocket_model = TTSModel.load_model(language=language)
+                self._pocket_language = language
+            model = self._pocket_model
+            if voice not in self._pocket_voices:
+                self._pocket_voices[voice] = model.get_state_for_audio_prompt(voice)
+            samples = model.generate_audio(self._pocket_voices[voice], text, copy_state=True).detach().cpu().numpy()
+            sample_rate = model.sample_rate
+        else:
+            from kittentts import KittenTTS
+            if self._kitten_model is None:
+                self._kitten_model = KittenTTS("KittenML/kitten-tts-mini-0.8")
+            samples = self._kitten_model.generate(text, voice=voice, speed=speed)
+            sample_rate = 24000
+        samples = np.asarray(samples, dtype="float32").reshape(-1)
+        if not samples.size or not np.isfinite(samples).all():
+            raise RuntimeError(f"{engine} returned invalid audio.")
+        buffer = io.BytesIO()
+        sf.write(buffer, samples, sample_rate, format="WAV")
+        return SynthesisResult(buffer.getvalue(), sample_rate, samples.size / sample_rate,
+                               engine, voice, time.perf_counter() - started)
+
+    def _load_kokoro(self, language: str = "a") -> Any:
         with self._lock:
-            if self._kokoro_pipeline is not None:
-                return self._kokoro_pipeline
+            if language in self._kokoro_pipelines:
+                return self._kokoro_pipelines[language]
             try:
                 from kokoro import KPipeline
 
                 try:
-                    self._kokoro_pipeline = KPipeline(lang_code="a", device=self.device)
+                    pipeline = KPipeline(lang_code=language, device=self.device,
+                                         model=getattr(self._kokoro_pipeline, "model", True))
                 except TypeError:
-                    self._kokoro_pipeline = KPipeline(lang_code="a")
+                    pipeline = KPipeline(lang_code=language)
+                self._kokoro_pipeline = pipeline
+                self._kokoro_pipelines[language] = pipeline
                 self._load_errors.pop("kokoro", None)
                 return self._kokoro_pipeline
             except Exception as exc:  # noqa: BLE001
@@ -399,6 +449,9 @@ class EngineRegistry:
         return {
             "enabled": engine in self.enabled_engines,
             "loaded": model is not None,
+            "available": engine in self.enabled_engines and (
+                model is not None or any(item["id"] == engine and item["installed"] for item in catalog(self.enabled_engines)["models"])
+            ),
             "error": self._load_errors.get(engine, ""),
         }
 
@@ -436,6 +489,9 @@ class TTSHandler(BaseHTTPRequestHandler):
         return self.server.registry  # type: ignore[attr-defined]
 
     def do_GET(self) -> None:  # noqa: N802
+        if self.path == "/v1/voices":
+            self._send_json(catalog(self.registry.enabled_engines))
+            return
         if self.path == "/healthz":
             self._send_json(self.registry.health())
             return
@@ -971,7 +1027,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--engines",
         default=os.getenv("DOC_READER_TTS_ENGINES", ",".join(DEFAULT_ENGINES)),
-        help="Comma-separated engines to enable: chatterbox,kokoro",
+        help="Comma-separated engines to enable: chatterbox,kokoro,pocket,kitten,whisper",
     )
     parser.add_argument("--device", default=_default_device())
     return parser

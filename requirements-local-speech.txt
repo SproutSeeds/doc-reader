@@ -1,0 +1,5 @@
+# Local CPU engines; install into the existing speech sidecar environment with uv.
+kokoro==0.9.4
+misaki[ja,zh]==0.9.4
+pocket-tts==3.1.0
+kittentts @ https://github.com/KittenML/KittenTTS/releases/download/0.8.1/kittentts-0.8.1-py3-none-any.whl
