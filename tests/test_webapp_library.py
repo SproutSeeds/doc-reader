@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -9,7 +10,11 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from doc_reader.webapp import INDEX_HTML, ReaderService
+from doc_reader.platform_tools import (
+    IS_MACOS, LOCAL_STT_LABEL, dictation_hotkey_label,
+    default_dictation_key, default_selection_shortcut, selection_hotkey_label,
+)
+from doc_reader.webapp import INDEX_HTML, SPEECH_BACKENDS, ReaderService, _service_health_cache_clear
 
 
 class FakeSpeechHandler(BaseHTTPRequestHandler):
@@ -104,6 +109,9 @@ class WebappLibraryTests(unittest.TestCase):
     def setUp(self) -> None:
         FakeSpeechHandler.calls = []
         FakeSpeechHandler.health_payload = None
+        _service_health_cache_clear()
+        os.environ["DOC_READER_SERVICE_HEALTH_CACHE_SECONDS"] = "0"
+        os.environ["DOC_READER_SERVICE_HEALTH_FAIL_CACHE_SECONDS"] = "0"
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), FakeSpeechHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -209,7 +217,7 @@ class WebappLibraryTests(unittest.TestCase):
             disabled_status = reader.native_status()
 
             self.assertFalse(disabled_status["stt"]["enabled"])
-            self.assertEqual(disabled_status["stt"]["hotkey"], "Option")
+            self.assertEqual(disabled_status["stt"]["hotkey"], dictation_hotkey_label())
 
     def test_default_tts_backend_is_mac_local(self) -> None:
         old_backend = os.environ.pop("DOC_READER_WEB_SPEECH_BACKEND", None)
@@ -220,7 +228,7 @@ class WebappLibraryTests(unittest.TestCase):
                 status = reader.tts_status()
 
                 self.assertEqual(status["backend"], "local-kokoro")
-                self.assertEqual(status["label"], "Mac Kokoro")
+                self.assertEqual(status["label"], SPEECH_BACKENDS["local-kokoro"])
         finally:
             if old_backend is not None:
                 os.environ["DOC_READER_WEB_SPEECH_BACKEND"] = old_backend
@@ -232,7 +240,7 @@ class WebappLibraryTests(unittest.TestCase):
             status = reader.stt_status()
 
             self.assertEqual(status["backend"], "mac-whisper")
-            self.assertEqual(status["label"], "Mac speech-to-text")
+            self.assertEqual(status["label"], LOCAL_STT_LABEL)
             self.assertTrue(status["ready"])
 
     def test_metrics_split_stt_and_tts_words(self) -> None:
@@ -307,7 +315,7 @@ class WebappLibraryTests(unittest.TestCase):
 
                 status = reader.stt_status()
                 self.assertEqual(status["backend"], "mac-whisper")
-                self.assertEqual(status["label"], "Mac speech-to-text")
+                self.assertEqual(status["label"], LOCAL_STT_LABEL)
                 self.assertTrue(status["ready"])
 
                 result = reader.transcribe_audio_file(
@@ -316,7 +324,7 @@ class WebappLibraryTests(unittest.TestCase):
                     content_type="audio/mp4",
                 )
 
-                self.assertEqual(result["transcription"]["service_label"], "Mac speech-to-text")
+                self.assertEqual(result["transcription"]["service_label"], LOCAL_STT_LABEL)
                 self.assertEqual(FakeSpeechHandler.calls[-1]["path"], "/v1/audio/transcriptions")
         finally:
             if old_umbra is None:
@@ -422,3 +430,235 @@ class WebappLibraryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorkspaceRedesignTests(unittest.TestCase):
+    """Contracts the content-first web page relies on."""
+
+    def setUp(self) -> None:
+        os.environ["DOC_READER_ANALYSIS_ENABLED"] = "0"
+        self._tmp = tempfile.TemporaryDirectory()
+        self.reader = ReaderService(Path(self._tmp.name))
+
+    def tearDown(self) -> None:
+        self.reader.shutdown()
+        self._tmp.cleanup()
+        os.environ.pop("DOC_READER_ANALYSIS_ENABLED", None)
+
+    def test_page_has_workspace_regions_and_controls(self) -> None:
+        for marker in [
+            'id="librarySidebar"',
+            'id="workspaceSurface"',
+            'id="inspector"',
+            'id="readText"',
+            'id="pause"',
+            'id="stop"',
+            'id="newText"',
+            'id="libraryToggle"',
+            'id="inspectorToggle"',
+            'id="copyItem"',
+            'id="editItem"',
+            'role="listbox"',
+            'aria-live="polite"',
+            "docReader.draft",
+            "docReader.selectedId",
+            "prefers-reduced-motion",
+            "prefers-contrast",
+        ]:
+            self.assertIn(marker, INDEX_HTML)
+        # Every file input keeps a visible, labelled button and an accessible name.
+        self.assertIn('aria-label="Import document"', INDEX_HTML)
+        self.assertIn('aria-label="Import audio"', INDEX_HTML)
+
+    def test_imported_text_document_is_readable_and_editable_in_workspace(self) -> None:
+        item = self.reader.add_document("notes.txt", b"First line.\n\nSecond paragraph.\n")
+        self.assertEqual(item.kind, "document")
+        self.assertEqual(item.title, "notes.txt")
+        text = self.reader.item_text(item.id)["text"]
+        self.assertIn("Second paragraph.", text)
+        self.assertIn("\n\n", text)
+        updated = self.reader.update_item_text(item.id, "Edited body.")
+        self.assertEqual(updated["item"]["id"], item.id)
+        self.assertEqual(self.reader.item_text(item.id)["text"].strip(), "Edited body.")
+        # Saving edits never creates a second item.
+        self.assertEqual(len(self.reader.library_items()), 1)
+
+    def test_pdf_document_has_no_text_preview_but_keeps_its_card(self) -> None:
+        item = self.reader.add_document("paper.pdf", b"%PDF-1.4 not a real pdf")
+        with self.assertRaises(ValueError):
+            self.reader.item_text(item.id)
+        payloads = self.reader.library_items()
+        self.assertEqual(payloads[0]["title"], "paper.pdf")
+
+
+class KokoroVoicePickerTests(unittest.TestCase):
+    setUp = WebappLibraryTests.setUp
+    tearDown = WebappLibraryTests.tearDown
+    _wait_for_ready = WebappLibraryTests._wait_for_ready
+
+    def test_page_offers_kokoro_voices_and_collapsed_engine_options(self) -> None:
+        self.assertIn('id="voiceButton"', INDEX_HTML)
+        self.assertIn('id="voiceGroups"', INDEX_HTML)
+        self.assertIn("American voices", INDEX_HTML)
+        self.assertIn("British voices", INDEX_HTML)
+        self.assertIn("Original engine options", INDEX_HTML)
+        self.assertIn("/api/voices/preview", INDEX_HTML)
+        self.assertNotIn('<select id="voice">', INDEX_HTML)
+
+    def test_state_lists_english_voices_with_default(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            reader = ReaderService(Path(directory))
+            tts = reader.state()["tts"]
+            ids = [voice["id"] for voice in tts["voices"]]
+            self.assertEqual(tts["kokoro_voice"], "af_heart")
+            self.assertIn("af_bella", ids)
+            self.assertIn("am_michael", ids)
+            self.assertIn("bf_emma", ids)
+            self.assertIn("bm_george", ids)
+            self.assertEqual({v["accent"] for v in tts["voices"]}, {"US", "UK"})
+            self.assertEqual({v["gender"] for v in tts["voices"]}, {"female", "male"})
+            self.assertIn("local-kokoro", tts["kokoro_backends"])
+
+    def test_chosen_voice_persists_and_reaches_speech_service(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            reader = ReaderService(Path(directory))
+            reader.update_settings({"kokoro_voice": "BF_Emma", "speech_backend": "tailscale-4090"})
+            self.assertEqual(reader.state()["tts"]["kokoro_voice"], "bf_emma")
+            self.assertEqual(ReaderService(Path(directory)).state()["tts"]["kokoro_voice"], "bf_emma")
+
+            item, queued = reader.upsert_library_item({
+                "source": "clawdad",
+                "source_item_id": "clawdad:voice-test",
+                "kind": "clawdad-message",
+                "text": "Read this in Emma's voice.",
+                "prepare_audio": True,
+            })
+            self.assertTrue(queued)
+            self._wait_for_ready(reader, item.id)
+            speech_calls = [c for c in FakeSpeechHandler.calls if c["path"] == "/v1/audio/speech"]
+            self.assertEqual(speech_calls[0]["payload"]["voice"], "bf_emma")
+
+    def test_unknown_voice_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            reader = ReaderService(Path(directory))
+            with self.assertRaises(ValueError):
+                reader.update_settings({"kokoro_voice": "../etc/passwd"})
+            with self.assertRaises(ValueError):
+                reader.update_settings({"kokoro_voice": "zz_nobody"})
+            self.assertEqual(reader.state()["tts"]["kokoro_voice"], "af_heart")
+
+    def test_voice_preview_speaks_sample_with_that_voice(self) -> None:
+        from doc_reader.webapp import _voice_preview_audio
+
+        audio = _voice_preview_audio("am_michael")
+        self.assertTrue(audio.startswith(b"fake-wav:Hi, I'm Michael."))
+        call = [c for c in FakeSpeechHandler.calls if c["path"] == "/v1/audio/speech"][-1]
+        self.assertEqual(call["payload"]["voice"], "am_michael")
+        with self.assertRaises(ValueError):
+            _voice_preview_audio("not a voice")
+
+
+class HotkeySwapTests(unittest.TestCase):
+    setUp = WebappLibraryTests.setUp
+    tearDown = WebappLibraryTests.tearDown
+
+    def test_page_offers_hotkey_chips(self) -> None:
+        self.assertIn('id="dictationKeyChips"', INDEX_HTML)
+        self.assertIn('id="selectionKeyChips"', INDEX_HTML)
+        self.assertIn("Read selection", INDEX_HTML)
+
+    def test_state_lists_hotkey_presets_with_current_choice(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            reader = ReaderService(Path(directory))
+            hotkeys = reader.state()["stt"]["hotkeys"]
+            self.assertEqual(hotkeys["dictation_key"], default_dictation_key())
+            self.assertEqual(hotkeys["selection_shortcut"], default_selection_shortcut())
+            self.assertIn({"value": "f8", "label": "F8"}, hotkeys["dictation_options"])
+            self.assertIn({"value": "<ctrl>+<shift>+r", "label": selection_hotkey_label("<ctrl>+<shift>+r")}, hotkeys["selection_options"])
+
+    def test_hotkey_choice_persists_and_updates_labels(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            reader = ReaderService(Path(directory))
+            reader.update_settings({"dictation_key": "F8", "selection_shortcut": "<ctrl>+<shift>+r"})
+            status = reader.native_status()
+            self.assertEqual(status["stt"]["hotkeys"]["dictation_key"], "f8")
+            self.assertEqual(status["stt"]["hotkey"], "F8")
+            self.assertEqual(status["stt"]["hotkeys"]["selection_label"], selection_hotkey_label("<ctrl>+<shift>+r"))
+            again = ReaderService(Path(directory)).state()["stt"]["hotkeys"]
+            self.assertEqual(again["selection_shortcut"], "<ctrl>+<shift>+r")
+
+    def test_bad_hotkeys_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            reader = ReaderService(Path(directory))
+            for bad in ("", "rm -rf", "../x", "<ctrl>+"):
+                with self.assertRaises(ValueError):
+                    reader.update_settings({"dictation_key": bad})
+                with self.assertRaises(ValueError):
+                    reader.update_settings({"selection_shortcut": bad})
+            self.assertEqual(reader.state()["stt"]["hotkeys"]["dictation_key"], default_dictation_key())
+
+
+class HotkeyRulesTests(unittest.TestCase):
+    def test_dictation_keys_you_do_not_type_with_are_allowed(self) -> None:
+        from doc_reader.platform_tools import validate_dictation_key
+
+        for key in ("ctrl_r", "alt", "shift_l", "f8", "f12", "insert", "mouse:x1", "mouse:x2"):
+            self.assertEqual(validate_dictation_key(key), (key, ""), key)
+        self.assertEqual(validate_dictation_key(" F8 "), ("f8", ""))
+
+    def test_typing_keys_windows_key_and_main_mouse_buttons_are_refused_with_a_reason(self) -> None:
+        from doc_reader.platform_tools import validate_dictation_key
+
+        for key in ("a", "1", "space", "enter", "tab"):
+            value, problem = validate_dictation_key(key)
+            self.assertEqual(value, "", key)
+            self.assertIn("side mouse button", problem)
+        for key in ("cmd", "cmd_l", "win"):
+            self.assertIn("Windows key", validate_dictation_key(key)[1])
+        for key in ("mouse:left", "mouse:right", "mouse:middle"):
+            self.assertIn("side buttons work", validate_dictation_key(key)[1])
+
+    def test_selection_shortcuts_need_a_modifier_and_one_final_key(self) -> None:
+        from doc_reader.platform_tools import validate_selection_shortcut
+
+        self.assertEqual(validate_selection_shortcut("<shift>+<ctrl>+r"), ("<ctrl>+<shift>+r", ""))
+        self.assertEqual(validate_selection_shortcut("<alt>+<f8>"), ("<alt>+<f8>", ""))
+        self.assertEqual(validate_selection_shortcut("<ctrl>+<alt>+<space>"), ("<ctrl>+<alt>+<space>", ""))
+        self.assertIn("Add Ctrl", validate_selection_shortcut("r")[1])
+        self.assertIn("Windows key", validate_selection_shortcut("<cmd>+r")[1])
+        self.assertIn("Finish with", validate_selection_shortcut("<ctrl>+<alt>")[1])
+        self.assertIn("Finish with", validate_selection_shortcut("<ctrl>+<tab>")[1])
+        self.assertIn("one key", validate_selection_shortcut("<ctrl>+a+b")[1])
+
+    def test_labels_read_naturally(self) -> None:
+        from doc_reader.platform_tools import dictation_hotkey_label, selection_hotkey_label
+
+        self.assertEqual(dictation_hotkey_label("mouse:x1"), "Mouse 4")
+        self.assertEqual(dictation_hotkey_label("alt_r"), "Right Option" if IS_MACOS else "Right Alt")
+        self.assertEqual(dictation_hotkey_label("scroll_lock"), "Scroll Lock")
+        self.assertEqual(selection_hotkey_label("<ctrl>+<shift>+<f8>"), "Control+Shift+F8" if IS_MACOS else "Ctrl+Shift+F8")
+
+
+class HotkeyRecorderTests(unittest.TestCase):
+    setUp = WebappLibraryTests.setUp
+    tearDown = WebappLibraryTests.tearDown
+
+    def test_page_has_click_to_record_fields(self) -> None:
+        self.assertIn('id="dictationKeyField"', INDEX_HTML)
+        self.assertIn('id="selectionKeyField"', INDEX_HTML)
+        self.assertIn("Press a key or a side mouse button", INDEX_HTML)
+        self.assertIn("Press a key combination", INDEX_HTML)
+
+    def test_web_settings_explain_a_refused_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            reader = ReaderService(Path(directory))
+            with self.assertRaises(ValueError) as caught:
+                reader.update_settings({"dictation_key": "a"})
+            self.assertIn("side mouse button", str(caught.exception))
+            reader.update_settings({"dictation_key": "mouse:x2", "selection_shortcut": "<shift>+<alt>+<f8>"})
+            hotkeys = reader.native_status()["stt"]["hotkeys"]
+            self.assertEqual(hotkeys["dictation_key"], "mouse:x2")
+            self.assertEqual(hotkeys["dictation_label"], "Mouse 5")
+            self.assertEqual(hotkeys["selection_shortcut"], "<alt>+<shift>+<f8>")
+            self.assertEqual(hotkeys["platform"], "macos" if IS_MACOS else ("windows" if sys.platform == "win32" else sys.platform))
+            self.assertTrue(hotkeys["dictation_custom"])

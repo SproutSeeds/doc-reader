@@ -1,13 +1,14 @@
 {
   "name": "read-docs",
   "version": "0.4.1",
-  "description": "macOS local-first speech workspace for document reading, dictation, and library analysis.",
+  "description": "Local-first speech workspace for document reading, dictation, and library analysis on macOS and Windows.",
   "license": "MIT",
   "type": "module",
   "bin": {
     "read-docs": "bin/read-docs.js"
   },
   "files": [
+    "assets/",
     "bin/",
     "build-macos-app",
     "doc_reader/",
@@ -22,7 +23,10 @@
     "read-selection-service.sh",
     "requirements.txt",
     "run-doc-reader",
-    "uninstall-context-menu-service"
+    "uninstall-context-menu-service",
+    "run-doc-reader.ps1",
+    "run-doc-reader.cmd",
+    "requirements-windows.txt"
   ],
   "scripts": {
     "pack:dry-run": "npm pack --dry-run"
@@ -43,7 +47,9 @@
     "macos",
     "menubar",
     "launchagent",
-    "reader"
+    "reader",
+    "windows",
+    "cuda"
   ],
   "repository": {
     "type": "git",

@@ -18,6 +18,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from .http_safety import MAX_JSON_BYTES, read_body, validate_browser_write
+
+from .platform_tools import configure_espeak, configure_windows_dll_search
+
 
 DEFAULT_ENGINES = ("chatterbox", "kokoro")
 DEFAULT_KOKORO_VOICE = "af_heart"
@@ -359,6 +363,7 @@ class EngineRegistry:
             if self._kokoro_pipeline is not None:
                 return self._kokoro_pipeline
             try:
+                configure_espeak()
                 from kokoro import KPipeline
 
                 try:
@@ -377,6 +382,7 @@ class EngineRegistry:
             if self._whisper_model is not None:
                 return self._whisper_model
             try:
+                configure_windows_dll_search()
                 from faster_whisper import WhisperModel
 
                 compute_type = _env(
@@ -443,6 +449,7 @@ class TTSHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         try:
+            validate_browser_write(self.headers)
             if self.path == "/v1/audio/speech":
                 payload = self._read_json()
                 result = self.registry.synthesize(
@@ -485,6 +492,8 @@ class TTSHandler(BaseHTTPRequestHandler):
                 )
                 return
             self.send_error(HTTPStatus.NOT_FOUND)
+        except PermissionError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.FORBIDDEN)
         except ValueError as exc:
             self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
         except Exception as exc:  # noqa: BLE001
@@ -498,20 +507,16 @@ class TTSHandler(BaseHTTPRequestHandler):
         sys.stderr.write("[doc-reader-tts] " + (format % args) + "\n")
 
     def _read_json(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        if length <= 0:
+        raw = read_body(self, limit=MAX_JSON_BYTES)
+        if not raw:
             return {}
-        raw = self.rfile.read(length)
         payload = json.loads(raw.decode("utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("JSON payload must be an object.")
         return payload
 
     def _read_body(self) -> bytes:
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        if length <= 0:
-            return b""
-        return self.rfile.read(length)
+        return read_body(self)
 
     def _send_json(self, payload: dict[str, Any], *, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload, indent=2).encode("utf-8")
@@ -545,6 +550,15 @@ class TTSServer(ThreadingHTTPServer):
     ) -> None:
         super().__init__(server_address, handler)
         self.registry = registry
+
+    def handle_error(self, request, client_address) -> None:  # noqa: ANN001
+        # Clients that give up while a model is loading produce noisy stack traces
+        # on Windows (WinError 10053/10054). Log one line instead.
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
+            print(f"[doc-reader-tts] client {client_address[0]} disconnected early", flush=True)
+            return
+        super().handle_error(request, client_address)
 
 
 def _torch_audio_to_wav_bytes(wav: Any, sample_rate: int) -> bytes:

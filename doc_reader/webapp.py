@@ -29,7 +29,35 @@ from urllib import error as urlerror
 from urllib import request as urlrequest
 from urllib.parse import parse_qs, unquote, urlparse
 
+from .http_safety import MAX_JSON_BYTES, read_body, validate_browser_write
+
 from .extract import iter_document_blocks
+from .kokoro_voices import (
+    DEFAULT_KOKORO_VOICE as DEFAULT_KOKORO_VOICE_ID,
+    KOKORO_BACKENDS,
+    english_voices,
+    is_known_voice,
+    normalize_voice,
+    sample_sentence,
+    voice_label,
+)
+from .platform_tools import (
+    IS_WINDOWS,
+    LOCAL_KOKORO_LABEL,
+    LOCAL_STT_LABEL,
+    default_dictation_key,
+    default_selection_shortcut,
+    dictation_hotkey_label,
+    hotkey_options,
+    normalize_dictation_key,
+    normalize_selection_shortcut,
+    selection_hotkey_label,
+    validate_dictation_key,
+    validate_selection_shortcut,
+    find_tool,
+    kill_process_tree,
+    popen_process_group_kwargs,
+)
 from .speech import (
     DEFAULT_TTS_MAC_URL,
     DEFAULT_TTS_UMBRA_URL,
@@ -80,10 +108,14 @@ SPEECH_BACKENDS = {
     "auto": "Local fallback",
     "tailscale-chatterbox": "Remote Chatterbox (experimental)",
     "tailscale-kokoro": "Remote Kokoro",
-    "local-kokoro": "Mac Kokoro",
+    "local-kokoro": LOCAL_KOKORO_LABEL,
     "macsay": "macOS Voice",
     "openai": "OpenAI API",
 }
+if sys.platform != "darwin":
+    SPEECH_BACKENDS.pop("macsay", None)
+    if "pyttsx3" in SPEECH_BACKENDS:
+        SPEECH_BACKENDS["pyttsx3"] = "Windows Voice" if IS_WINDOWS else "System Voice"
 DEFAULT_STT_ENABLED = True
 STYLE_STOP_WORDS = frozenset(
     {
@@ -300,7 +332,8 @@ class ReaderService:
             "active_id": self._active_id or self._paused_id,
             "stt": {
                 "enabled": self._stt_enabled(),
-                "hotkey": "Option",
+                "hotkey": self._hotkeys(settings)["dictation_label"],
+                "hotkeys": self._hotkeys(settings),
                 "microphone": _microphone_payload(settings),
             },
         }
@@ -657,11 +690,13 @@ class ReaderService:
                 f"{start_seconds:.2f}",
                 "--verbose",
             ]
+            if backend in KOKORO_BACKENDS:
+                args.extend(["--http-tts-voice", self._kokoro_voice()])
 
             env = os.environ.copy()
             package_root = str(Path(__file__).resolve().parents[1])
             env["PYTHONPATH"] = package_root + (
-                f":{env['PYTHONPATH']}" if env.get("PYTHONPATH") else ""
+                f"{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else ""
             )
             if backend == "openai":
                 self._extend_openai_args(args)
@@ -681,7 +716,7 @@ class ReaderService:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                start_new_session=True,
+                **popen_process_group_kwargs(),
             )
 
             self._process = process
@@ -713,44 +748,72 @@ class ReaderService:
             return self.state()
 
     def update_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
-        settings = self._settings()
-        backend = payload.get("speech_backend")
-        if backend is not None:
-            backend = str(backend).strip()
-            if backend not in SPEECH_BACKENDS:
-                raise ValueError("Unknown speech backend.")
-            settings["speech_backend"] = backend
-            self._status = f"Voice: {SPEECH_BACKENDS[backend]}"
-        if "stt_enabled" in payload:
-            settings["stt_enabled"] = bool(payload.get("stt_enabled"))
-            self._status = (
-                "Dictation hotkey enabled."
-                if settings["stt_enabled"]
-                else "Dictation hotkey disabled."
-            )
-        rate_value = payload.get("read_rate", payload.get("readRate"))
-        if rate_value is not None:
-            read_rate = _normalize_read_rate(rate_value)
-            settings["read_rate"] = read_rate
-            self._write_rate_control(read_rate)
-            self._status = f"Read speed: {read_rate} WPM."
-        if "microphone_id" in payload:
-            microphone_id = str(payload.get("microphone_id") or "").strip()
-            devices = _sanitized_microphone_devices(settings.get("microphones"))
-            if not microphone_id:
-                preferred_device = _preferred_microphone_device(devices)
-                if preferred_device:
-                    microphone_id = preferred_device["id"]
-                    self._status = f"Microphone pinned to {preferred_device['name']}."
+        with self._lock:
+            settings = self._settings()
+            backend = payload.get("speech_backend")
+            if backend is not None:
+                backend = str(backend).strip()
+                if backend not in SPEECH_BACKENDS:
+                    raise ValueError("Unknown speech backend.")
+                settings["speech_backend"] = backend
+                self._status = f"Voice: {SPEECH_BACKENDS[backend]}"
+            if "dictation_key" in payload:
+                key, problem = validate_dictation_key(payload.get("dictation_key"))
+                if problem:
+                    raise ValueError(problem)
+                settings["dictation_key"] = key
+                self._status = f"Dictation key: hold {dictation_hotkey_label(key)}"
+            if "selection_shortcut" in payload:
+                shortcut, problem = validate_selection_shortcut(payload.get("selection_shortcut"))
+                if problem:
+                    raise ValueError(problem)
+                settings["selection_shortcut"] = shortcut
+                self._status = f"Read selection: {selection_hotkey_label(shortcut)}"
+            if "kokoro_voice" in payload:
+                voice = normalize_voice(payload.get("kokoro_voice"))
+                if not voice or not is_known_voice(voice):
+                    raise ValueError("Unknown Kokoro voice.")
+                settings["kokoro_voice"] = voice
+                self._status = f"Voice: {voice_label(voice)}"
+            if "stt_enabled" in payload:
+                settings["stt_enabled"] = bool(payload.get("stt_enabled"))
+                self._status = (
+                    "Dictation hotkey enabled."
+                    if settings["stt_enabled"]
+                    else "Dictation hotkey disabled."
+                )
+            rate_value = payload.get("read_rate", payload.get("readRate"))
+            if rate_value is not None:
+                read_rate = _normalize_read_rate(rate_value)
+                settings["read_rate"] = read_rate
+                self._write_rate_control(read_rate)
+                self._status = f"Read speed: {read_rate} WPM."
+            if "microphone_id" in payload:
+                microphone_id = str(payload.get("microphone_id") or "").strip()
+                devices = _sanitized_microphone_devices(settings.get("microphones"))
+                if not microphone_id:
+                    preferred_device = _preferred_microphone_device(devices)
+                    if preferred_device:
+                        microphone_id = preferred_device["id"]
+                        self._status = f"Microphone pinned to {preferred_device['name']}."
+                    else:
+                        self._status = "Microphone setting updated."
                 else:
                     self._status = "Microphone setting updated."
-            else:
-                self._status = "Microphone setting updated."
-            settings["microphone_id"] = microphone_id
-        self._save_settings(settings)
-        return self.state()
+                settings["microphone_id"] = microphone_id
+            self._save_settings(settings)
+            return self.state()
 
     def start_native_helper(self) -> dict[str, Any]:
+        if IS_WINDOWS:
+            from .windows_app import start_helper
+
+            self._clear_native_helper_runtime_status("native helper starting from web app")
+            message = start_helper()
+            with self._lock:
+                self._status = message
+                status = self._status
+            return {"ok": True, "status": status}
         if sys.platform != "darwin":
             raise RuntimeError("The native helper is only available on macOS.")
         uid = os.getuid()
@@ -784,6 +847,15 @@ class ReaderService:
         return {"ok": True, "status": status}
 
     def reset_native_helper(self) -> dict[str, Any]:
+        if IS_WINDOWS:
+            from .windows_app import restart_helper
+
+            self._clear_native_helper_runtime_status("native helper reset requested")
+            message = restart_helper()
+            with self._lock:
+                self._status = message
+                status = self._status
+            return {"ok": True, "status": status}
         if sys.platform != "darwin":
             raise RuntimeError("The native helper is only available on macOS.")
         uid = os.getuid()
@@ -828,6 +900,15 @@ class ReaderService:
         return {"ok": True, "status": status}
 
     def stop_native_helper(self) -> dict[str, Any]:
+        if IS_WINDOWS:
+            from .windows_app import stop_helper
+
+            message = stop_helper()
+            self._clear_native_helper_runtime_status("native helper stopped from web app")
+            with self._lock:
+                self._status = message
+                status = self._status
+            return {"ok": True, "status": status}
         if sys.platform != "darwin":
             raise RuntimeError("The native helper is only available on macOS.")
         uid = os.getuid()
@@ -851,62 +932,71 @@ class ReaderService:
         return {"ok": True, "status": status}
 
     def _clear_native_helper_runtime_status(self, event: str) -> None:
-        settings = self._settings()
-        settings["native_dictation_status_at"] = 0
-        settings["active_microphone_id"] = ""
-        settings["recording"] = False
-        settings["recording_start_pending"] = False
-        settings["audio_level"] = 0
-        settings["audio_peak_level"] = 0
-        settings["last_dictation_event"] = event
-        self._save_settings(settings)
+        with self._lock:
+            settings = self._settings()
+            settings["native_dictation_status_at"] = 0
+            settings["active_microphone_id"] = ""
+            settings["active_microphone_name"] = ""
+            settings["recording"] = False
+            settings["recording_start_pending"] = False
+            settings["audio_level"] = 0
+            settings["audio_peak_level"] = 0
+            settings["last_dictation_event"] = event
+            self._save_settings(settings)
 
     def update_native_dictation_status(self, payload: dict[str, Any]) -> dict[str, Any]:
-        settings = self._settings()
-        devices = payload.get("devices")
-        if isinstance(devices, list):
-            sanitized = []
-            for device in devices:
-                if not isinstance(device, dict):
-                    continue
-                device_id = str(device.get("id") or "").strip()
-                name = str(device.get("name") or "").strip()
-                if device_id and name:
-                    sanitized.append({"id": device_id, "name": name})
-            settings["microphones"] = sanitized
-            _pin_preferred_microphone(settings, sanitized)
-        for key in [
-            "microphone_authorization",
-            "input_monitoring_trusted",
-            "accessibility_trusted",
-            "active_microphone_id",
-            "recording",
-            "recording_start_pending",
-            "last_dictation_event",
-            "audio_level",
-            "audio_peak_level",
-            "last_recording_path",
-            "last_recording_bytes",
-            "last_recording_seconds",
-            "last_recording_content_type",
-            "last_recording_peak_level",
-            "last_recording_created_at",
-        ]:
-            if key in payload:
-                settings[key] = payload.get(key)
-        settings["native_dictation_status_at"] = time.time()
-        self._save_settings(settings)
-        if str(payload.get("last_dictation_event") or "") == "native helper started":
-            with self._lock:
-                if self._status == "Doc Reader app helper start requested.":
-                    self._status = "Doc Reader app helper started."
-        return {"ok": True, "stt": self.stt_status()}
+        with self._lock:
+            settings = self._settings()
+            devices = payload.get("devices")
+            if isinstance(devices, list):
+                sanitized = []
+                for device in devices:
+                    if not isinstance(device, dict):
+                        continue
+                    device_id = str(device.get("id") or "").strip()
+                    name = str(device.get("name") or "").strip()
+                    if device_id and name:
+                        sanitized.append({"id": device_id, "name": name})
+                settings["microphones"] = sanitized
+                _pin_preferred_microphone(settings, sanitized)
+            for key in [
+                "microphone_authorization",
+                "input_monitoring_trusted",
+                "accessibility_trusted",
+                "active_microphone_id",
+                "active_microphone_name",
+                "recording",
+                "recording_start_pending",
+                "last_dictation_event",
+                "audio_level",
+                "audio_peak_level",
+                "last_recording_path",
+                "last_recording_bytes",
+                "last_recording_seconds",
+                "last_recording_content_type",
+                "last_recording_peak_level",
+                "last_recording_created_at",
+            ]:
+                if key in payload:
+                    settings[key] = payload.get(key)
+            settings["native_dictation_status_at"] = time.time()
+            self._save_settings(settings)
+            if str(payload.get("last_dictation_event") or "") == "native helper started":
+                with self._lock:
+                    if self._status == "Doc Reader app helper start requested.":
+                        self._status = "Doc Reader app helper started."
+            return {"ok": True, "stt": self.stt_status()}
 
     def tts_status(self) -> dict[str, Any]:
         backend = self._speech_backend()
+        voice = self._kokoro_voice()
         return {
             "backend": backend,
             "label": SPEECH_BACKENDS.get(backend, backend),
+            "kokoro_voice": voice,
+            "kokoro_voice_label": voice_label(voice),
+            "kokoro_backends": sorted(KOKORO_BACKENDS),
+            "voices": english_voices(),
             "options": [
                 {"value": value, "label": label}
                 for value, label in SPEECH_BACKENDS.items()
@@ -923,7 +1013,8 @@ class ReaderService:
         settings = self._settings()
         return {
             "enabled": self._stt_enabled(),
-            "hotkey": "Option",
+            "hotkey": self._hotkeys(settings)["dictation_label"],
+            "hotkeys": self._hotkeys(settings),
             "backend": stt_backend,
             "label": _stt_service_label(stt_backend),
             "service": service,
@@ -1340,7 +1431,7 @@ class ReaderService:
                 text = _read_text_file(Path(item.source_path))
                 read_rate = self._read_rate()
 
-            audio = _synthesize_library_audio(text, rate=read_rate)
+            audio = _synthesize_library_audio(text, rate=read_rate, voice=self._kokoro_voice())
             audio_path = self.audio_dir / f"{item_id}.wav"
             temp_path = audio_path.with_suffix(f".{uuid.uuid4().hex}.tmp")
             temp_path.write_bytes(audio)
@@ -1469,6 +1560,30 @@ class ReaderService:
             raise FileNotFoundError("Saved recording file not found.")
         content_type = str(settings.get("last_recording_content_type") or "audio/mp4")
         return resolved.read_bytes(), content_type
+
+    def _hotkeys(self, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Current hotkeys: saved web setting first, then environment, then defaults."""
+        settings = settings if settings is not None else self._settings()
+        dictation = normalize_dictation_key(settings.get("dictation_key")) or default_dictation_key()
+        selection = normalize_selection_shortcut(settings.get("selection_shortcut")) or default_selection_shortcut()
+        options = hotkey_options()
+        return {
+            "platform": "macos" if sys.platform == "darwin" else ("windows" if IS_WINDOWS else sys.platform),
+            "dictation_key": dictation,
+            "dictation_label": dictation_hotkey_label(dictation),
+            "selection_shortcut": selection,
+            "selection_label": selection_hotkey_label(selection),
+            "dictation_options": options["dictation"],
+            "selection_options": options["selection"],
+            "dictation_custom": bool(normalize_dictation_key(settings.get("dictation_key"))),
+            "selection_custom": bool(normalize_selection_shortcut(settings.get("selection_shortcut"))),
+        }
+
+    def _kokoro_voice(self) -> str:
+        configured = normalize_voice(self._settings().get("kokoro_voice"))
+        if configured:
+            return configured
+        return normalize_voice(os.getenv("DOC_READER_HTTP_TTS_VOICE", "")) or DEFAULT_KOKORO_VOICE_ID
 
     def _speech_backend(self) -> str:
         configured = self._settings().get("speech_backend")
@@ -1749,6 +1864,18 @@ class DocReaderHandler(BaseHTTPRequestHandler):
         if route_path == "/api/state":
             self._send_json(self.reader.state())
             return
+        if route_path == "/api/voices/preview":
+            query = {key: values[-1] for key, values in parse_qs(parsed.query).items() if values}
+            try:
+                audio = _voice_preview_audio(query.get("voice", ""))
+            except ValueError as exc:
+                self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"ok": False, "error": f"Voice preview failed: {exc}"}, status=HTTPStatus.BAD_GATEWAY)
+                return
+            self._send_binary(audio, content_type="audio/wav")
+            return
         if route_path == "/api/metrics":
             self._send_json({"ok": True, "metrics": self.reader.metrics_snapshot()})
             return
@@ -1818,6 +1945,7 @@ class DocReaderHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         try:
+            validate_browser_write(self.headers)
             parsed = urlparse(self.path)
             route_path = parsed.path
             if route_path == "/api/text":
@@ -1944,20 +2072,16 @@ class DocReaderHandler(BaseHTTPRequestHandler):
         sys.stderr.write("[doc-reader-web] " + (format % args) + "\n")
 
     def _read_json(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        if length <= 0:
+        raw = read_body(self, limit=MAX_JSON_BYTES)
+        if not raw:
             return {}
-        raw = self.rfile.read(length)
         payload = json.loads(raw.decode("utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("JSON payload must be an object.")
         return payload
 
     def _read_body(self) -> bytes:
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        if length <= 0:
-            return b""
-        return self.rfile.read(length)
+        return read_body(self)
 
     def _read_upload(self) -> tuple[str, bytes, str]:
         content_type = self.headers.get("Content-Type", "")
@@ -1965,7 +2089,7 @@ class DocReaderHandler(BaseHTTPRequestHandler):
         if "multipart/form-data" not in content_type or length <= 0:
             raise ValueError("Expected a multipart file upload.")
 
-        raw = self.rfile.read(length)
+        raw = read_body(self)
         message = BytesParser(policy=default).parsebytes(
             b"Content-Type: "
             + content_type.encode("utf-8")
@@ -2030,6 +2154,14 @@ class DocReaderHTTPServer(ThreadingHTTPServer):
 
 def _terminate_process_group(process: subprocess.Popen[str]) -> None:
     if process.poll() is not None:
+        return
+    if IS_WINDOWS:
+        # taskkill /T stops the reader and the ffplay child it may be waiting on.
+        kill_process_tree(process.pid, force=True)
+        try:
+            process.wait(timeout=1.5)
+        except subprocess.TimeoutExpired:
+            process.kill()
         return
     try:
         os.killpg(process.pid, signal.SIGTERM)
@@ -2955,6 +3087,7 @@ def _microphone_payload(settings: dict[str, Any]) -> dict[str, Any]:
         "preferred_id": preferred_device["id"] if preferred_device is not None else "",
         "preferred_name": preferred_device["name"] if preferred_device is not None else "",
         "active_id": str(settings.get("active_microphone_id") or ""),
+        "active_name": str(settings.get("active_microphone_name") or ""),
         "native_helper_online": native_helper_online,
         "native_status_age_seconds": native_age_seconds,
         "recording": bool(settings.get("recording")),
@@ -2984,7 +3117,43 @@ def _read_text_file(path: Path) -> str:
         return ""
 
 
+_HEALTH_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_HEALTH_CACHE_LOCK = threading.Lock()
+DEFAULT_HEALTH_CACHE_OK_SECONDS = 1.5
+DEFAULT_HEALTH_CACHE_FAIL_SECONDS = 10.0
+
+
+def _service_health_cache_clear() -> None:
+    with _HEALTH_CACHE_LOCK:
+        _HEALTH_CACHE.clear()
+
+
 def _service_health(base_url: str, *, timeout: float | None = None) -> dict[str, Any]:
+    """Probe a speech service, caching the answer briefly.
+
+    `state()` is polled by the page about once a second and calls this for every
+    configured service while holding the reader lock. An unreachable remote
+    service (for example the author's Tailscale box when running elsewhere) would
+    otherwise cost a full connect timeout on every poll and stall dictation and
+    playback requests behind the lock.
+    """
+    ok_ttl = _env_float("DOC_READER_SERVICE_HEALTH_CACHE_SECONDS", DEFAULT_HEALTH_CACHE_OK_SECONDS)
+    fail_ttl = _env_float("DOC_READER_SERVICE_HEALTH_FAIL_CACHE_SECONDS", DEFAULT_HEALTH_CACHE_FAIL_SECONDS)
+    now = time.monotonic()
+    with _HEALTH_CACHE_LOCK:
+        cached = _HEALTH_CACHE.get(base_url)
+    if cached is not None:
+        cached_at, payload = cached
+        ttl = ok_ttl if payload.get("ok") else fail_ttl
+        if now - cached_at < ttl:
+            return dict(payload)
+    payload = _service_health_uncached(base_url, timeout=timeout)
+    with _HEALTH_CACHE_LOCK:
+        _HEALTH_CACHE[base_url] = (time.monotonic(), dict(payload))
+    return payload
+
+
+def _service_health_uncached(base_url: str, *, timeout: float | None = None) -> dict[str, Any]:
     started = time.perf_counter()
     timeout_seconds = timeout
     if timeout_seconds is None:
@@ -3029,7 +3198,7 @@ def _stt_default_url() -> str:
 
 def _stt_service_label(backend: str) -> str:
     if backend == "mac-whisper":
-        return "Mac speech-to-text"
+        return LOCAL_STT_LABEL
     if backend == "custom-whisper":
         return "Speech-to-text"
     return "Remote speech-to-text"
@@ -3085,7 +3254,7 @@ def _require_stt_service() -> tuple[str, dict[str, Any]]:
     )
 
 
-def _synthesize_library_audio(text: str, *, rate: int = DEFAULT_RATE) -> bytes:
+def _synthesize_library_audio(text: str, *, rate: int = DEFAULT_RATE, voice: str = "") -> bytes:
     cleaned = str(text or "").strip()
     if not cleaned:
         raise ValueError("No text to synthesize.")
@@ -3116,12 +3285,31 @@ def _synthesize_library_audio(text: str, *, rate: int = DEFAULT_RATE) -> bytes:
                 base_url,
                 text=cleaned,
                 engine=engine,
-                voice=_env("DOC_READER_HTTP_TTS_VOICE", ""),
+                voice=voice or _env("DOC_READER_HTTP_TTS_VOICE", ""),
                 speed=_speed_for_rate(_normalize_read_rate(rate)),
             )
         except Exception as exc:  # noqa: BLE001
             failures.append(f"{base_url}: {exc}")
     raise RuntimeError("Doc Reader local TTS failed: " + " | ".join(failures))
+
+
+_VOICE_PREVIEW_CACHE: dict[str, bytes] = {}
+_VOICE_PREVIEW_LOCK = threading.Lock()
+
+
+def _voice_preview_audio(voice_id: str) -> bytes:
+    """Short spoken sample for one Kokoro voice, synthesized once per process."""
+    voice = normalize_voice(voice_id)
+    if not voice or not is_known_voice(voice):
+        raise ValueError("Unknown Kokoro voice.")
+    with _VOICE_PREVIEW_LOCK:
+        cached = _VOICE_PREVIEW_CACHE.get(voice)
+    if cached:
+        return cached
+    audio = _synthesize_library_audio(sample_sentence(voice), rate=DEFAULT_RATE, voice=voice)
+    with _VOICE_PREVIEW_LOCK:
+        _VOICE_PREVIEW_CACHE[voice] = audio
+    return audio
 
 
 def _synthesize_library_audio_from_url(
@@ -3336,16 +3524,7 @@ def _suffix_from_content_type(content_type: str) -> str:
 
 
 def _local_tool(name: str) -> str:
-    candidates = [
-        shutil.which(name) or "",
-        f"/opt/homebrew/bin/{name}",
-        f"/usr/local/bin/{name}",
-        f"/usr/bin/{name}",
-    ]
-    for candidate in candidates:
-        if candidate and Path(candidate).is_file():
-            return candidate
-    return ""
+    return find_tool(name)
 
 
 def _optional_string(value: object) -> str | None:
@@ -3603,7 +3782,7 @@ INDEX_HTML = r"""<!doctype html>
   <meta name="apple-mobile-web-app-title" content="Doc Reader">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#17201c">
+  <meta name="theme-color" content="#1C1F25">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="shortcut icon" href="/favicon.ico">
   <link rel="alternate icon" href="/favicon.ico" sizes="32x32">
@@ -3613,580 +3792,1098 @@ INDEX_HTML = r"""<!doctype html>
   <style>
     :root {
       color-scheme: light dark;
-      --bg: #f7f7f4;
-      --panel: #ffffff;
-      --ink: #1d1e20;
-      --muted: #63676d;
-      --line: #d8d9d2;
-      --accent: #28666e;
-      --accent-ink: #ffffff;
-      --success: #16833a;
-      --warn: #9a3412;
+      --bg: #F1F3F5;
+      --surface: #E8EBEE;
+      --editor: #FFFFFF;
+      --editor-line: #D3D8DE;
+      --ink: #15171B;
+      --muted: #4E5765;
+      --line: #D3D8DE;
+      --line-strong: #6F7986;
+      --accent: #137D6B;
+      --accent-soft: #D6EEE8;
+      --accent-ink: #FFFFFF;
+      --live: #9A5B00;
+      --live-soft: #FBEBD2;
+      --warn: #B3261E;
+      --warn-soft: #FADCD9;
+      --shadow: 0 8px 24px -12px rgba(21, 23, 27, 0.35);
+      --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, Roboto, "Helvetica Neue", sans-serif;
+      --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+      --header-h: 52px;
+      --library-w: 280px;
+      --inspector-w: 340px;
     }
     @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #191a1d;
-        --panel: #23262b;
-        --ink: #f2f3f4;
-        --muted: #a8adb5;
-        --line: #3a3f47;
-        --accent: #5aa6b0;
-        --accent-ink: #071214;
-        --success: #55c979;
-        --warn: #f59e0b;
+      :root:not([data-theme="light"]) {
+        --bg: #15171B;
+        --surface: #1C1F25;
+        --editor: #242830;
+        --editor-line: #2C313A;
+        --ink: #F3F4F6;
+        --muted: #B0B8C4;
+        --line: #2C313A;
+        --line-strong: #6C7689;
+        --accent: #62D0BC;
+        --accent-soft: #1F3A36;
+        --accent-ink: #10251F;
+        --live: #F0B45C;
+        --live-soft: #3A2E1A;
+        --warn: #F28B82;
+        --warn-soft: #3D2523;
+        --shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.7);
       }
     }
+    :root[data-theme="dark"] {
+      --bg: #15171B;
+      --surface: #1C1F25;
+      --editor: #242830;
+      --editor-line: #2C313A;
+      --ink: #F3F4F6;
+      --muted: #B0B8C4;
+      --line: #2C313A;
+      --line-strong: #6C7689;
+      --accent: #62D0BC;
+      --accent-soft: #1F3A36;
+      --accent-ink: #10251F;
+      --live: #F0B45C;
+      --live-soft: #3A2E1A;
+      --warn: #F28B82;
+      --warn-soft: #3D2523;
+      --shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.7);
+    }
+
     * { box-sizing: border-box; }
+    html { background: var(--bg); height: 100%; }
     body {
       margin: 0;
-      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      height: 100%;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      font: 14px/1.45 var(--font-body);
       background: var(--bg);
       color: var(--ink);
+      -webkit-font-smoothing: antialiased;
     }
-    main {
-      max-width: 1080px;
-      margin: 0 auto;
-      padding: 24px;
+    h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+    h1 { font-size: 17px; line-height: 1.2; }
+    h2 { font-size: 15px; line-height: 1.3; }
+    h3 { font-size: 13px; line-height: 1.3; color: var(--ink); }
+    .visually-hidden {
+      position: absolute !important;
+      width: 1px; height: 1px;
+      padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
+      white-space: nowrap; border: 0;
     }
-    header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 18px;
+    .skip-link {
+      position: absolute; left: 8px; top: -40px; z-index: 50;
+      background: var(--accent); color: var(--accent-ink);
+      padding: 8px 12px; border-radius: 8px; font-weight: 600;
     }
-    h1 {
-      font-size: 24px;
-      margin: 0;
-      letter-spacing: 0;
+    .skip-link:focus { top: 8px; }
+    [hidden] { display: none !important; }
+
+    /* ---------------------------------------------------------------- focus */
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
     }
-    h2 {
-      font-size: 13px;
-      margin: 0;
-      letter-spacing: 0;
-      text-transform: uppercase;
-      color: var(--muted);
+    textarea:focus-visible, select:focus-visible, .library-search:focus-visible {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
     }
-    .status {
-      color: var(--muted);
-      text-align: right;
-      min-width: 180px;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-      gap: 18px;
-      align-items: start;
-    }
-    section {
-      min-width: 0;
-    }
-    .panel {
-      background: var(--panel);
-      border: 1px solid var(--line);
+
+    /* ---------------------------------------------------------------- controls */
+    button, .file-button {
+      border: 1px solid var(--line-strong);
       border-radius: 8px;
-      padding: 14px;
-    }
-    .stack { display: grid; gap: 10px; }
-    label {
-      display: block;
-      color: var(--muted);
-      font-size: 12px;
-      margin-bottom: 5px;
-    }
-    textarea, select {
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 10px;
-      background: transparent;
+      padding: 0 12px;
+      min-height: 34px;
+      background: var(--surface);
       color: var(--ink);
-      font: inherit;
-    }
-    textarea {
-      min-height: 180px;
-      resize: vertical;
-    }
-    select {
-      min-height: 36px;
-      padding: 7px 10px;
-    }
-    input[type="range"] {
-      width: 100%;
-      accent-color: var(--accent);
-    }
-    .range-head {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      align-items: center;
-    }
-    .range-head label {
-      margin-bottom: 0;
-    }
-    .range-value {
-      color: var(--muted);
-      font-size: 12px;
-      white-space: nowrap;
-    }
-    input[type="file"] {
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 8px;
-      background: transparent;
-      color: var(--ink);
-    }
-    .audio-upload-row {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 8px;
-      align-items: center;
-    }
-    .audio-upload-row input[type="file"] {
-      min-width: 0;
-    }
-    .check-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--ink);
-    }
-    .check-row label {
-      margin: 0;
-      color: var(--ink);
-      font-size: 13px;
-    }
-    .row {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      align-items: center;
-    }
-    .service-row {
-      justify-content: space-between;
-    }
-    .service-toggle {
-      min-width: 104px;
-    }
-    .service-actions {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-    }
-    .service-reset {
-      min-width: 72px;
-    }
-    .service-toggle.running {
-      border-color: var(--warn);
-      color: var(--warn);
-    }
-    button {
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 8px 11px;
-      background: var(--panel);
-      color: var(--ink);
-      font: inherit;
-      min-height: 36px;
+      font: 500 13.5px/1.2 var(--font-body);
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      white-space: nowrap;
+      transition: transform 120ms var(--ease-out), background 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
     }
+    button:active:not(:disabled), .file-button:active { transform: scale(0.97); }
+    @media (hover: hover) and (pointer: fine) {
+      button:hover:not(:disabled), .file-button:hover { background: var(--editor); }
+    }
+    button:disabled { cursor: default; opacity: 0.45; }
     button.primary {
       background: var(--accent);
       color: var(--accent-ink);
       border-color: var(--accent);
+      font-weight: 600;
+    }
+    @media (hover: hover) and (pointer: fine) {
+      button.primary:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--accent) 86%, var(--ink));
+        border-color: color-mix(in srgb, var(--accent) 86%, var(--ink));
+      }
+    }
+    button.quiet { background: transparent; border-color: transparent; }
+    @media (hover: hover) and (pointer: fine) {
+      button.quiet:hover:not(:disabled) { background: var(--surface); border-color: var(--line-strong); }
     }
     button.icon-button {
-      width: 36px;
-      min-width: 36px;
+      width: 34px;
+      min-width: 34px;
       padding: 0;
-      display: inline-grid;
-      place-items: center;
-      transition: border-color 180ms ease, color 180ms ease, background 180ms ease, opacity 180ms ease;
     }
-    button.icon-button svg {
-      width: 17px;
-      height: 17px;
-      stroke: currentColor;
-      stroke-width: 2;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      fill: none;
+    button svg, .file-button svg, .chip svg {
+      width: 16px; height: 16px; flex: none;
+      stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; fill: none;
     }
-    button.icon-button.copied {
-      color: var(--success);
-      border-color: var(--success);
-      background: color-mix(in srgb, var(--success) 12%, transparent);
+    button.icon-button.copied { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+    .file-button { position: relative; }
+    .file-button input[type="file"] {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      opacity: 0; cursor: pointer;
     }
+    .file-button:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .file-button.busy { opacity: 0.6; pointer-events: none; }
+
+    textarea, select, .library-search {
+      width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: var(--editor);
+      color: var(--ink);
+      font: inherit;
+      transition: border-color 140ms ease, box-shadow 140ms ease;
+    }
+    select {
+      min-height: 34px;
+      padding: 6px 30px 6px 10px;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+      background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%;
+      background-size: 5px 5px, 5px 5px;
+      background-repeat: no-repeat;
+    }
+    input[type="range"] { accent-color: var(--accent); width: 100%; margin: 0; }
+    input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); margin: 0; }
+    .check-row { display: inline-flex; align-items: center; gap: 7px; }
+    .check-row label { color: var(--ink); font-weight: 500; }
+    label { color: var(--muted); font-size: 12.5px; font-weight: 500; }
+    .field { display: grid; gap: 5px; }
+    .field-inline { display: flex; align-items: center; gap: 8px; }
+
+    .chip {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 0 10px; min-height: 28px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--muted);
+      font: 500 12.5px/1 var(--font-body);
+    }
+    .chip .chip-dot, .state-dot, .status-dot {
+      flex: none; width: 8px; height: 8px; border-radius: 50%;
+      background: var(--line-strong);
+    }
+    .chip[data-state="ready"] { color: var(--ink); }
+    .chip[data-state="ready"] .chip-dot { background: var(--accent); }
+    .chip[data-state="recording"] { color: var(--live); border-color: color-mix(in srgb, var(--live) 50%, var(--line)); background: var(--live-soft); }
+    .chip[data-state="recording"] .chip-dot { background: var(--live); animation: pulse 1.2s ease-in-out infinite; }
+    .chip[data-state="working"], .chip[data-state="starting"] { color: var(--ink); }
+    .chip[data-state="working"] .chip-dot, .chip[data-state="starting"] .chip-dot { background: var(--live); }
+    .chip[data-state="error"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); }
+    .chip[data-state="error"] .chip-dot { background: var(--warn); }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--live) 40%, transparent); }
+      50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--live) 0%, transparent); }
+    }
+
+    /* ---------------------------------------------------------------- header */
+    .app-header {
+      flex: none;
+      height: var(--header-h);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 14px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+      min-width: 0;
+    }
+    .header-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-width: 0; }
+    .header-right { margin-left: auto; display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .status-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 34vw; }
+    .status {
+      color: var(--muted);
+      font-size: 12.5px;
+      font-variant-numeric: tabular-nums;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    body[data-state="reading"] .status-dot { background: var(--accent); }
+    body[data-state="paused"] .status-dot { background: var(--live); }
+    #libraryToggle { display: none; }
+
+    /* ---------------------------------------------------------------- body grid */
+    .app-body {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: var(--library-w) minmax(0, 1fr) auto;
+      position: relative;
+    }
+    .scrim {
+      position: fixed; inset: var(--header-h) 0 0 0;
+      background: rgba(0, 0, 0, 0.45);
+      z-index: 20;
+    }
+
+    /* ---------------------------------------------------------------- library */
+    .library {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--line);
+    }
+    .library-top { display: grid; gap: 8px; padding: 12px 12px 8px; }
     .view-toggle {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      overflow: hidden;
-      background: var(--panel);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      background: var(--bg);
+      padding: 2px;
+      gap: 2px;
     }
     .view-toggle button {
       border: 0;
-      border-radius: 0;
-      min-height: 40px;
+      border-radius: 7px;
+      min-height: 30px;
+      padding: 0 4px;
       background: transparent;
-    }
-    .view-toggle button + button {
-      border-left: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12.5px;
+      font-variant-numeric: tabular-nums;
+      overflow: hidden; text-overflow: ellipsis;
     }
     .view-toggle button.active {
       background: var(--accent);
       color: var(--accent-ink);
+      font-weight: 600;
     }
-    .library-search {
-      min-height: 36px;
-      border: 1px solid var(--line);
+    @media (hover: hover) and (pointer: fine) {
+      .view-toggle button:hover:not(.active) { color: var(--ink); background: var(--surface); }
+    }
+    .library-search { min-height: 34px; background: var(--editor); }
+    .list-header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 4px 12px 6px; }
+    .count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .history {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-bottom: 12px;
+    }
+    .row-item {
+      display: grid;
+      gap: 3px;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: 0;
+      border-left: 3px solid transparent;
+      border-radius: 0;
+      padding: 9px 12px 9px 11px;
+      min-height: 0;
+      font: inherit;
+      color: var(--ink);
+      white-space: normal;
+      transition: background 120ms var(--ease-out);
+    }
+    .row-item + .row-item { box-shadow: inset 0 1px 0 var(--line); }
+    @media (hover: hover) and (pointer: fine) {
+      .row-item:hover { background: color-mix(in srgb, var(--editor) 60%, var(--surface)); }
+    }
+    .row-item[aria-selected="true"] {
+      background: var(--editor);
+      border-left-color: var(--accent);
+    }
+    .row-item[aria-selected="true"] .row-primary { font-weight: 600; }
+    .row-item[aria-selected="true"] .row-secondary { color: var(--ink); }
+    .row-item:focus-visible { outline-offset: -2px; }
+    .row-primary {
+      font-size: 13.5px; line-height: 1.35; font-weight: 400;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+      overflow-wrap: anywhere;
+    }
+    .row-secondary {
+      color: var(--muted); font-size: 12.5px; line-height: 1.35;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+      overflow-wrap: anywhere;
+    }
+    .row-meta {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+      color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums;
+    }
+    .row-meta .live-tag {
+      color: var(--accent); font-weight: 600;
+      display: inline-flex; align-items: center; gap: 5px;
+    }
+    .row-meta .live-tag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .row-meta .live-tag.paused { color: var(--live); }
+    .row-item.live { box-shadow: inset 0 1px 0 var(--line), inset 3px 0 0 var(--accent); }
+    .row-item.live[aria-selected="true"] { border-left-color: var(--accent); }
+    .empty {
+      margin: 12px;
+      color: var(--muted);
+      border: 1px dashed var(--line-strong);
+      border-radius: 10px;
+      padding: 22px 14px;
+      text-align: center;
+      font-size: 13px;
+    }
+
+    /* ---------------------------------------------------------------- workspace */
+    .workspace {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      background: var(--bg);
+    }
+    .workspace-head {
+      flex: none;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 24px 10px;
+    }
+    .workspace-heading { min-width: 0; display: grid; gap: 2px; }
+    .kicker { color: var(--muted); font-size: 12px; font-weight: 500; }
+    .workspace-heading h2 { font-size: 16px; overflow-wrap: anywhere; }
+    .workspace-heading .meta { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .workspace-actions { display: flex; gap: 6px; flex: none; }
+    .workspace-surface {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 0 24px 16px;
+    }
+    #text, .reading-editor {
+      flex: 1;
+      min-height: 160px;
+      resize: none;
+      padding: 22px 26px;
+      font-size: 17px;
+      line-height: 1.6;
+      border-color: var(--editor-line);
+      border-radius: 10px;
+    }
+    .reading-text {
+      flex: 1;
+      min-height: 160px;
+      overflow: auto;
+      overscroll-behavior: contain;
+      padding: 22px 26px;
+      background: var(--editor);
+      border: 1px solid var(--editor-line);
+      border-radius: 10px;
+      font-size: 17px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .reading-text > .measure { max-width: 72ch; }
+    .notice {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      padding: 10px 12px;
+      border: 1px dashed var(--line-strong);
+      border-radius: 8px;
+    }
+    .import-status { color: var(--muted); font-size: 12.5px; padding: 0 24px; min-height: 0; }
+    .import-status:empty { display: none; }
+    .error {
+      color: var(--warn);
+      font-size: 13px;
+      padding: 6px 24px 0;
+    }
+    .error:empty { display: none; }
+    .workspace-footer {
+      flex: none;
+      display: flex;
+      align-items: center;
+      gap: 14px 22px;
+      flex-wrap: wrap;
+      padding: 10px 24px;
+      border-top: 1px solid var(--line);
+      background: var(--surface);
+    }
+    .playback { display: flex; align-items: center; gap: 8px; }
+    .playback-state {
+      display: inline-flex; align-items: center; gap: 7px;
+      margin-left: 6px;
+      color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums;
+      max-width: 34ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    body[data-state="reading"] .state-dot { background: var(--accent); }
+    body[data-state="paused"] .state-dot { background: var(--live); }
+    .footer-settings { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-left: auto; }
+    .footer-settings select { width: 190px; }
+    .footer-settings .speed input[type="range"] { width: 130px; }
+    .footer-settings output { color: var(--ink); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 12ch; }
+
+    /* ---------------------------------------------------------------- hotkeys */
+    .hotkeys { display: grid; gap: 10px; padding: 2px 0 4px; }
+    .hotkey-row { display: grid; gap: 6px; }
+    .hotkey-head { display: flex; align-items: baseline; gap: 6px; }
+    .hotkey-name { color: var(--ink); font-size: 12.5px; font-weight: 600; }
+    .hotkey-sub { color: var(--muted); font-size: 11.5px; }
+    .hotkey-field {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 6px;
+      width: 100%;
+      min-height: 40px;
+      padding: 5px 9px 5px 7px;
+      border: 1px solid var(--line-strong);
+      border-radius: 9px;
+      background: var(--editor);
+      color: var(--ink);
+      text-align: left;
+      transition: border-color 150ms var(--ease-out), box-shadow 150ms var(--ease-out);
+    }
+    .hotkey-field svg { width: 14px; height: 14px; color: var(--muted); margin-left: auto; flex: none; }
+    .hotkey-field.recording {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
+    }
+    .hotkey-field.recording svg { color: var(--accent); }
+    .hotkey-prompt { color: var(--muted); font-size: 12.5px; }
+    .keycaps { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+    .keycaps .plus { color: var(--muted); font-size: 11px; }
+    kbd.keycap {
+      font: inherit;
+      font-size: 12.5px;
+      font-weight: 600;
+      line-height: 1;
+      padding: 6px 9px;
       border-radius: 6px;
-      padding: 8px 10px;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-bottom-width: 2px;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+    .hotkey-error { color: var(--warn); font-size: 12px; line-height: 1.35; }
+    .hotkey-error:empty { display: none; }
+    .hotkey-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .hotkey-chip {
+      min-height: 28px;
+      padding: 0 11px;
+      border-radius: 999px;
+      border: 1px solid var(--line-strong);
+      background: var(--bg);
+      color: var(--ink);
+      font-size: 12.5px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+    .hotkey-chip[aria-checked="true"] {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--accent-ink);
+      font-weight: 600;
+    }
+    @media (hover: hover) and (pointer: fine) {
+      .hotkey-chip:hover:not([aria-checked="true"]) { background: var(--surface); border-color: var(--ink); }
+    }
+    .hotkey-hint { color: var(--muted); font-size: 11.5px; }
+
+    /* ---------------------------------------------------------------- voice picker */
+    .voice-picker { position: relative; }
+    #voiceButton { max-width: 260px; }
+    #voiceButton span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #voiceButton svg { width: 14px; height: 14px; color: var(--muted); flex: none; }
+    .voice-menu {
+      position: absolute;
+      left: 0;
+      bottom: calc(100% + 8px);
+      width: 360px;
+      max-height: min(70vh, 640px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      background: var(--surface);
+      border: 1px solid var(--line-strong);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      padding: 8px;
+      z-index: 40;
+      transform-origin: bottom left;
+      transition: opacity 150ms var(--ease-out), transform 150ms var(--ease-out);
+    }
+    @starting-style {
+      .voice-menu { opacity: 0; transform: scale(0.97) translateY(4px); }
+    }
+    .voice-menu-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 6px 8px 8px; }
+    .voice-menu-head h3 { margin: 0; font-size: 13px; font-weight: 600; }
+    .voice-groups { display: grid; gap: 6px; }
+    .voice-group-title { color: var(--muted); font-size: 12px; font-weight: 500; padding: 8px 8px 2px; }
+    .voice-list { display: grid; gap: 1px; }
+    .voice-option {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      min-height: 34px;
+      padding: 4px 6px 4px 8px;
+      border: 0;
+      border-radius: 8px;
       background: transparent;
       color: var(--ink);
+      text-align: left;
       font: inherit;
+      white-space: normal;
     }
-    .signal-panel {
-      display: grid;
-      gap: 10px;
+    @media (hover: hover) and (pointer: fine) {
+      .voice-option:hover { background: var(--editor); }
     }
-    .metric-grid {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 8px;
-    }
-    .metric-cell {
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 8px;
-      min-width: 0;
-    }
-    .metric-value {
-      font-weight: 700;
-      font-size: 18px;
-      line-height: 1.2;
-    }
-    .topic-map {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-    .topic-pill {
-      border: 1px solid var(--line);
+    .voice-option .check { width: 16px; height: 16px; color: var(--accent); opacity: 0; }
+    .voice-option[aria-selected="true"] .check { opacity: 1; }
+    .voice-option[aria-selected="true"] .voice-name { font-weight: 600; }
+    .voice-name { font-size: 13.5px; line-height: 1.25; }
+    .voice-meta { color: var(--muted); font-size: 11.5px; line-height: 1.2; }
+    .voice-preview {
+      width: 28px; min-width: 28px; min-height: 28px; padding: 0;
       border-radius: 999px;
-      padding: 3px 8px;
+      border-color: transparent;
+      background: transparent;
       color: var(--muted);
-      font-size: 12px;
     }
-    button:disabled {
-      cursor: default;
-      opacity: 0.55;
+    .voice-preview svg { width: 14px; height: 14px; }
+    .voice-preview.playing { color: var(--accent); border-color: var(--accent); }
+    .voice-preview.playing svg { fill: currentColor; }
+    .voice-preview.loading { opacity: 0.5; }
+    @media (hover: hover) and (pointer: fine) {
+      .voice-preview:hover:not(:disabled) { color: var(--ink); background: var(--bg); border-color: var(--line-strong); }
     }
-    .history {
-      display: grid;
-      gap: 10px;
+    .voice-original {
+      position: sticky;
+      bottom: -8px;
+      margin: 6px -8px -8px;
+      padding: 6px 8px 8px;
+      background: var(--surface);
+      border-top: 1px solid var(--line);
     }
-    .list-column {
-      display: grid;
-      gap: 18px;
-    }
-    .list-block {
-      display: grid;
-      gap: 10px;
-    }
-    .list-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-    }
-    .count {
-      color: var(--muted);
-      font-size: 12px;
-    }
-    [hidden] {
-      display: none !important;
-    }
-    .card {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel);
-      padding: 12px;
-      display: grid;
-      gap: 8px;
-    }
-    .card.active {
-      border-color: var(--accent);
-    }
-    .card-top {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 12px;
-      align-items: center;
-    }
-    .card-actions {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-    .title {
-      font-weight: 650;
-      overflow-wrap: anywhere;
-    }
-    .meta, .snippet {
-      color: var(--muted);
-      font-size: 12px;
-      overflow-wrap: anywhere;
-    }
-    .dictation-text {
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
+    .voice-disclosure {
+      width: 100%;
+      justify-content: flex-start;
+      border-color: transparent;
+      background: transparent;
       color: var(--ink);
-      font-size: 14px;
+      padding: 0 8px;
+      gap: 8px;
     }
-    .dictation-edit {
-      min-height: 160px;
-      line-height: 1.35;
-      white-space: pre-wrap;
+    .voice-disclosure .chevron { transition: transform 150ms var(--ease-out); }
+    .voice-disclosure[aria-expanded="true"] .chevron { transform: rotate(90deg); }
+    .voice-disclosure .detail { margin-left: auto; }
+    @media (max-width: 720px) {
+      .voice-menu {
+        position: fixed;
+        left: 8px; right: 8px; bottom: 8px;
+        width: auto;
+        max-height: 70vh;
+        transform-origin: bottom center;
+      }
     }
-    .voice-status {
-      color: var(--muted);
-      font-size: 12px;
-      min-height: 18px;
+
+    /* ---------------------------------------------------------------- inspector */
+    .inspector {
+      width: var(--inspector-w);
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      background: var(--surface);
+      border-left: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
     }
+    .inspector-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 6px; }
+    .inspector-section { padding: 12px 14px 14px; border-top: 1px solid var(--line); display: grid; gap: 10px; }
+    .inspector-section .list-header { padding: 0; }
+    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .service-row { justify-content: space-between; }
+    .service-actions { display: flex; gap: 6px; }
+    .service-toggle.running { color: var(--live); border-color: color-mix(in srgb, var(--live) 50%, var(--line-strong)); background: var(--live-soft); }
+    .readiness { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; font-size: 12.5px; }
+    .readiness dt { color: var(--muted); }
+    .readiness dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+    .readiness dd.ok { color: var(--ink); }
+    .readiness dd.warn { color: var(--live); }
+    .readiness dd.bad { color: var(--warn); }
+    .voice-status { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
     .mic-meter {
       --level: 0;
-      height: 10px;
-      border: 1px solid var(--line);
+      height: 8px;
+      border: 1px solid var(--line-strong);
       border-radius: 999px;
       background: var(--bg);
       overflow: hidden;
     }
     .mic-meter > div {
       width: calc(var(--level) * 100%);
-      min-width: 2px;
-      max-width: 100%;
-      height: 100%;
+      min-width: 2px; max-width: 100%; height: 100%;
       border-radius: inherit;
-      background: linear-gradient(90deg, var(--accent), var(--success));
-      transition: width 90ms linear;
+      background: linear-gradient(90deg, var(--accent) 0%, var(--accent) 60%, var(--live) 100%);
+      transition: width 80ms linear;
     }
-    .mic-meter.active {
-      border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
-    }
+    .mic-meter.active { border-color: var(--live); }
     .recording-debug {
-      display: grid;
-      gap: 6px;
-      border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
-      border-radius: 8px;
-      padding: 8px 10px;
-      background: color-mix(in srgb, var(--accent) 10%, var(--panel));
-      color: var(--muted);
-      font-size: 12px;
+      display: grid; gap: 6px;
+      border: 1px solid color-mix(in srgb, var(--live) 40%, var(--line));
+      border-radius: 8px; padding: 8px 10px;
+      background: var(--live-soft);
+      color: var(--muted); font-size: 12px;
     }
-    .recording-debug[hidden] {
-      display: none;
+    .recording-debug strong { color: var(--ink); font-size: 12.5px; }
+    .recording-debug audio { width: 100%; height: 32px; }
+    .metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
+    .metric-cell { display: grid; gap: 1px; }
+    .metric-value { font-size: 22px; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+    .metric-label { color: var(--muted); font-size: 12px; }
+    .snippet { color: var(--ink); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+    .detail { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .topic-map { display: flex; gap: 6px; flex-wrap: wrap; }
+    .topic-pill {
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      padding: 2px 9px;
+      color: var(--ink);
+      font-size: 12px; font-variant-numeric: tabular-nums;
+      background: var(--bg);
     }
-    .recording-debug strong {
-      color: var(--fg);
-      font-size: 13px;
+
+    /* ---------------------------------------------------------------- responsive */
+    @media (max-width: 1180px) {
+      .app-body { grid-template-columns: var(--library-w) minmax(0, 1fr); }
+      .inspector {
+        position: fixed; top: var(--header-h); right: 0; bottom: 0;
+        z-index: 30; box-shadow: var(--shadow);
+        width: min(var(--inspector-w), 100vw);
+      }
     }
-    .recording-debug audio {
-      width: 100%;
-      height: 32px;
+    @media (max-width: 1023px) {
+      #libraryToggle { display: inline-flex; }
+      .app-body { grid-template-columns: minmax(0, 1fr); }
+      .library {
+        position: fixed; top: var(--header-h); left: 0; bottom: 0;
+        width: min(var(--library-w), 86vw);
+        z-index: 30; box-shadow: var(--shadow);
+        transform: translateX(-104%);
+        visibility: hidden;
+        transition: transform 200ms var(--ease-out), visibility 0s linear 200ms;
+      }
+      .library.open { transform: none; visibility: visible; transition: transform 200ms var(--ease-out); }
+      .header-actions .check-row label { font-size: 12.5px; }
     }
-    .empty {
-      color: var(--muted);
-      border: 1px dashed var(--line);
-      border-radius: 8px;
-      padding: 18px;
-      text-align: center;
+    @media (max-width: 720px) {
+      .app-header { gap: 6px; padding: 0 8px; }
+      .header-left { gap: 6px; }
+      h1 { font-size: 15px; white-space: nowrap; }
+      .header-actions { gap: 4px; }
+      .header-actions .check-row { gap: 5px; }
+      .header-actions .check-row label { font-size: 12px; }
+      .header-right { gap: 6px; }
+      .header-actions .file-button span, #newText span { display: none; }
+      .header-actions .file-button, #newText { min-width: 34px; padding: 0 8px; }
+      .status-wrap { max-width: 26vw; }
+      .status { display: none; }
+      #inspectorToggle span { display: none; }
+      #inspectorToggle { min-width: 34px; padding: 0 8px; }
+      .workspace-head { padding: 12px 14px 8px; }
+      .workspace-surface { padding: 0 14px 12px; }
+      #text, .reading-editor, .reading-text { padding: 16px; font-size: 16px; }
+      .workspace-footer { padding: 8px 12px; gap: 10px 14px; }
+      .footer-settings { margin-left: 0; width: 100%; }
+      .footer-settings select { width: 150px; }
+      .playback-state { max-width: 20ch; }
+      .error, .import-status { padding-left: 14px; padding-right: 14px; }
     }
-    .error {
-      color: var(--warn);
-      min-height: 20px;
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition: none !important; animation: none !important; }
     }
-    @media (max-width: 760px) {
-      main { padding: 16px; }
-      header { align-items: flex-start; flex-direction: column; }
-      .status { text-align: left; }
-      .grid { grid-template-columns: 1fr; }
-      .audio-upload-row { grid-template-columns: 1fr; }
-      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    @media (prefers-contrast: more) {
+      button, .file-button, textarea, select, .library-search, .view-toggle, .mic-meter { border-color: var(--ink); }
+      .row-item[aria-selected="true"] { outline: 2px solid var(--ink); outline-offset: -2px; }
     }
   </style>
 </head>
 <body>
-  <main>
-    <header>
+  <a class="skip-link" href="#workspaceSurface">Skip to workspace</a>
+  <header class="app-header">
+    <div class="header-left">
+      <button id="libraryToggle" class="icon-button" type="button" aria-label="Show library" aria-expanded="false" aria-controls="librarySidebar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></svg>
+      </button>
       <h1>Doc Reader</h1>
-      <div class="status" id="status">Ready.</div>
-    </header>
-    <div class="grid">
-      <section class="panel stack">
-        <div>
-          <label for="file">Document</label>
-          <input id="file" type="file" accept=".pdf,.docx,.txt,.md,.markdown">
+    </div>
+    <div class="header-actions">
+      <label class="file-button" id="fileLabel" title="Import a PDF, DOCX, TXT, or Markdown file and read it">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
+        <span>Import document</span>
+        <input id="file" type="file" accept=".pdf,.docx,.txt,.md,.markdown" aria-label="Import document">
+      </label>
+      <label class="file-button" id="audioFileLabel" title="Transcribe an audio or video file into a Dictation">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
+        <span>Import audio</span>
+        <input id="audioFile" type="file" accept="audio/*,video/mp4,video/webm,.aac,.aif,.aiff,.flac,.m4a,.mp3,.mp4,.ogg,.wav,.webm" aria-label="Import audio">
+      </label>
+      <div class="check-row">
+        <input id="audioTimestamps" type="checkbox">
+        <label for="audioTimestamps">Timestamps</label>
+      </div>
+      <button id="newText" type="button" title="Start a new text">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        <span>New text</span>
+      </button>
+    </div>
+    <div class="header-right">
+      <div class="status-wrap">
+        <span class="status-dot" aria-hidden="true"></span>
+        <div class="status" id="status" aria-live="polite">Ready.</div>
+      </div>
+      <button id="inspectorToggle" type="button" aria-expanded="false" aria-controls="inspector" title="Dictation, Signal map, and engine details">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h6"/><circle cx="17" cy="15" r="3"/></svg>
+        <span>Details</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="app-body" id="appBody">
+    <div class="scrim" id="scrim" hidden></div>
+
+    <aside class="library" id="librarySidebar" aria-label="Library">
+      <div class="library-top">
+        <div class="view-toggle" role="tablist" aria-label="Library filter">
+          <button id="showAll" type="button" role="tab" aria-controls="library">All</button>
+          <button id="showReadings" type="button" role="tab" aria-controls="library">Readings</button>
+          <button id="showDictations" type="button" role="tab" aria-controls="library">Dictations</button>
+          <button id="showClawdad" type="button" role="tab" aria-controls="library" title="Items handed off from the Clawdad app">Clawdad</button>
         </div>
-        <div>
-          <label for="audioFile">Audio</label>
-          <div class="audio-upload-row">
-            <input id="audioFile" type="file" accept="audio/*,video/mp4,video/webm,.aac,.aif,.aiff,.flac,.m4a,.mp3,.mp4,.ogg,.wav,.webm">
-            <div class="check-row">
-              <input id="audioTimestamps" type="checkbox">
-              <label for="audioTimestamps">Timestamps</label>
+        <label class="visually-hidden" for="librarySearch">Search library</label>
+        <input id="librarySearch" class="library-search" type="search" placeholder="Search saved items">
+      </div>
+      <div class="list-header">
+        <h2 id="libraryTitle">Library</h2>
+        <div class="count" id="libraryCount"></div>
+      </div>
+      <div class="history" id="library" role="listbox" aria-label="Saved items"></div>
+    </aside>
+
+    <main class="workspace" id="workspace">
+      <div class="workspace-head">
+        <div class="workspace-heading">
+          <div class="kicker" id="workspaceKind">New text</div>
+          <h2 id="workspaceTitle">Untitled</h2>
+          <div class="meta" id="workspaceMeta">Paste or type, then press Read text.</div>
+        </div>
+        <div class="workspace-actions">
+          <button id="copyItem" class="icon-button" type="button" aria-label="Copy text" title="Copy text" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+          <button id="editItem" class="icon-button" type="button" aria-label="Edit text" title="Edit text" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          </button>
+          <button id="saveItem" class="primary" type="button" title="Save changes (Ctrl+Enter)" hidden>Save</button>
+          <button id="cancelEdit" type="button" title="Cancel edit (Esc)" hidden>Cancel</button>
+        </div>
+      </div>
+      <div class="workspace-surface" id="workspaceSurface" tabindex="-1">
+        <label class="visually-hidden" for="text">Text to read</label>
+        <textarea id="text" placeholder="Paste or type anything to hear it read aloud."></textarea>
+        <div class="reading-text" id="itemView" hidden><div class="measure" id="itemViewText"></div></div>
+        <label class="visually-hidden" for="itemEditor">Edit saved text</label>
+        <textarea id="itemEditor" class="reading-editor" hidden></textarea>
+        <div class="notice" id="itemNotice" hidden></div>
+      </div>
+      <div class="import-status" id="audioFileStatus" aria-live="polite"></div>
+      <div class="error" id="error" role="alert"></div>
+      <footer class="workspace-footer">
+        <div class="playback">
+          <button class="primary" id="readText" type="button">Read text</button>
+          <button id="pause" type="button">Pause</button>
+          <button id="stop" type="button">Stop</button>
+          <div class="playback-state" id="playbackState">
+            <span class="state-dot" aria-hidden="true"></span>
+            <span id="playbackStateText">Ready</span>
+          </div>
+        </div>
+        <div class="footer-settings">
+          <div class="field-inline voice-field">
+            <label for="voiceButton">Voice</label>
+            <div class="voice-picker">
+              <button id="voiceButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="voiceMenu">
+                <span id="voiceButtonText">Voice</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
+              </button>
+              <div id="voiceMenu" class="voice-menu" role="dialog" aria-label="Choose a voice" hidden>
+                <div class="voice-menu-head">
+                  <h3>Kokoro voices</h3>
+                  <span class="detail">English, runs on this PC</span>
+                </div>
+                <div id="voiceGroups" class="voice-groups"></div>
+                <div class="voice-original">
+                  <button id="voiceOriginalToggle" class="voice-disclosure" type="button" aria-expanded="false" aria-controls="voiceOriginalList">
+                    <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+                    <span>Original engine options</span>
+                    <span class="detail" id="voiceOriginalSummary"></span>
+                  </button>
+                  <div id="voiceOriginalList" class="voice-list" role="listbox" aria-label="Engine options" hidden></div>
+                </div>
+              </div>
             </div>
           </div>
-          <div class="voice-status" id="audioFileStatus"></div>
-        </div>
-        <div>
-          <label for="text">Text</label>
-          <textarea id="text"></textarea>
-        </div>
-        <div>
-          <label for="voice">Voice</label>
-          <select id="voice"></select>
-          <div class="voice-status" id="voiceStatus"></div>
-        </div>
-        <div>
-          <div class="range-head">
-            <label for="readRate">Read Speed</label>
-            <output class="range-value" id="readRateValue" for="readRate">180 WPM / 1.00x</output>
+          <div class="field-inline speed">
+            <label for="readRate">Speed</label>
+            <input id="readRate" type="range" min="90" max="300" step="5" value="180">
+            <output id="readRateValue" for="readRate">180 WPM / 1.00x</output>
           </div>
-          <input id="readRate" type="range" min="90" max="300" step="5" value="180">
+          <button class="chip" id="dictationChip" type="button" aria-controls="inspector" title="Dictation state. Opens details.">
+            <span class="chip-dot" aria-hidden="true"></span>
+            <span id="dictationChipText">Dictation</span>
+          </button>
         </div>
-        <div>
-          <div class="row service-row">
-            <div class="check-row">
-              <input id="dictationEnabled" type="checkbox">
-              <label for="dictationEnabled">Speech-to-text</label>
-            </div>
-            <div class="service-actions">
-              <button id="nativeHelperToggle" class="service-toggle" type="button">Start Helper</button>
-              <button id="nativeHelperReset" class="service-reset" type="button" title="Restart the native hotkey helper">Reset</button>
-            </div>
+      </footer>
+    </main>
+
+    <aside class="inspector" id="inspector" aria-label="Details" hidden>
+      <div class="inspector-head">
+        <h2>Details</h2>
+        <button id="inspectorClose" class="icon-button quiet" type="button" aria-label="Close details">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+      <section class="inspector-section" aria-labelledby="dictationHeading">
+        <h3 id="dictationHeading">Dictation</h3>
+        <div class="check-row">
+          <input id="dictationEnabled" type="checkbox">
+          <label for="dictationEnabled">Dictation hotkey (hold <span id="dictationHotkey">the dictation key</span>)</label>
+        </div>
+        <div class="hotkeys" id="hotkeys">
+          <div class="hotkey-row">
+            <div class="hotkey-head"><span class="hotkey-name">Dictation key</span><span class="hotkey-sub">hold to talk</span></div>
+            <button class="hotkey-field" id="dictationKeyField" type="button" aria-label="Change the dictation key" aria-pressed="false">
+              <span class="keycaps" id="dictationKeyCaps"></span>
+              <span class="hotkey-prompt" id="dictationKeyPrompt" hidden>Press a key or a side mouse button</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+            </button>
+            <div class="hotkey-error" id="dictationKeyError" role="alert"></div>
+            <div class="hotkey-chips" id="dictationKeyChips" role="radiogroup" aria-label="Dictation key presets"></div>
           </div>
-          <div class="voice-status" id="dictationStatus"></div>
-          <div class="mic-meter" id="dictationMeter" aria-label="Microphone level"><div></div></div>
+          <div class="hotkey-row">
+            <div class="hotkey-head"><span class="hotkey-name">Read selection</span><span class="hotkey-sub">press to read the highlighted text</span></div>
+            <button class="hotkey-field" id="selectionKeyField" type="button" aria-label="Change the read-selection shortcut" aria-pressed="false">
+              <span class="keycaps" id="selectionKeyCaps"></span>
+              <span class="hotkey-prompt" id="selectionKeyPrompt" hidden>Press a key combination</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+            </button>
+            <div class="hotkey-error" id="selectionKeyError" role="alert"></div>
+            <div class="hotkey-chips" id="selectionKeyChips" role="radiogroup" aria-label="Read selection presets"></div>
+          </div>
+          <div class="hotkey-hint" id="hotkeyHint">Changes apply right away while the helper is running.</div>
         </div>
-        <div>
+        <div class="row service-row">
+          <span class="voice-status">Hotkey helper</span>
+          <div class="service-actions">
+            <button id="nativeHelperToggle" class="service-toggle" type="button">Start helper</button>
+            <button id="nativeHelperReset" class="service-reset" type="button" title="Restart the hotkey helper">Reset</button>
+          </div>
+        </div>
+        <dl class="readiness" id="dictationReadiness"></dl>
+        <div class="mic-meter" id="dictationMeter" role="meter" aria-label="Microphone level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div></div></div>
+        <div class="field">
           <label for="microphone">Microphone</label>
           <select id="microphone"></select>
           <div class="voice-status" id="microphoneStatus"></div>
         </div>
         <div class="recording-debug" id="dictationRecordingDebug" hidden>
-          <strong>Latest Recording</strong>
+          <strong>Latest recording</strong>
           <div id="dictationRecordingStatus"></div>
           <audio id="dictationRecordingAudio" controls preload="none"></audio>
         </div>
-        <div class="row">
-          <button class="primary" id="readText">Read Text</button>
-          <button id="pause">Pause</button>
-          <button id="stop">Stop</button>
-        </div>
-        <div class="error" id="error"></div>
       </section>
-      <section class="list-column">
-        <div class="view-toggle" role="tablist" aria-label="History view">
-          <button id="showAll" type="button" role="tab" aria-controls="libraryBlock">All</button>
-          <button id="showReadings" type="button" role="tab" aria-controls="libraryBlock">Readings</button>
-          <button id="showDictations" type="button" role="tab" aria-controls="libraryBlock">Dictations</button>
-          <button id="showClawdad" type="button" role="tab" aria-controls="libraryBlock">Clawdad</button>
+      <section class="inspector-section" aria-labelledby="signalHeading">
+        <div class="list-header">
+          <h3 id="signalHeading">Signal map</h3>
+          <button id="runAnalysis" type="button">Analyze</button>
         </div>
-        <div class="panel signal-panel">
-          <div class="list-header">
-            <h2>Signal Map</h2>
-            <button id="runAnalysis" type="button">Analyze</button>
+        <div class="metric-grid">
+          <div class="metric-cell" title="Words across saved dictations">
+            <div class="metric-value" id="sttWords">0</div>
+            <div class="metric-label">Dictated words</div>
           </div>
-          <div class="metric-grid">
-            <div class="metric-cell">
-              <div class="metric-value" id="sttWords">0</div>
-              <div class="meta">STT words</div>
-            </div>
-            <div class="metric-cell">
-              <div class="metric-value" id="ttsWords">0</div>
-              <div class="meta">TTS words</div>
-            </div>
-            <div class="metric-cell">
-              <div class="metric-value" id="analyzedItems">0</div>
-              <div class="meta">Analyzed</div>
-            </div>
-            <div class="metric-cell">
-              <div class="metric-value" id="openItems">0</div>
-              <div class="meta">Open</div>
-            </div>
+          <div class="metric-cell" title="Words across saved readings (text, documents, Clawdad)">
+            <div class="metric-value" id="ttsWords">0</div>
+            <div class="metric-label">Reading words</div>
           </div>
-          <div class="snippet" id="analysisSummary"></div>
-          <div class="topic-map" id="topicMap"></div>
+          <div class="metric-cell" title="Saved items that have an analysis entry">
+            <div class="metric-value" id="analyzedItems">0</div>
+            <div class="metric-label">Analyzed</div>
+          </div>
+          <div class="metric-cell" title="Analyzed readings not yet finished">
+            <div class="metric-value" id="openItems">0</div>
+            <div class="metric-label">Open readings</div>
+          </div>
         </div>
-        <div class="list-block" id="libraryBlock">
-          <div class="list-header">
-            <h2 id="libraryTitle">Library</h2>
-            <div class="count" id="libraryCount"></div>
-          </div>
-          <input id="librarySearch" class="library-search" type="search" placeholder="Filter library">
-          <div class="history" id="library"></div>
-        </div>
+        <div class="snippet" id="analysisSummary"></div>
+        <div class="detail" id="analysisDetail"></div>
+        <div class="kicker">Frequent terms</div>
+        <div class="topic-map" id="topicMap"></div>
       </section>
-    </div>
-  </main>
+      <section class="inspector-section" aria-labelledby="enginesHeading">
+        <h3 id="enginesHeading">Speech engines</h3>
+        <dl class="readiness" id="engineStatus"></dl>
+        <div class="voice-status" id="voiceStatus"></div>
+      </section>
+    </aside>
+  </div>
+
   <script>
     const state = {
       data: null,
-      editingItemId: "",
+      selectedId: localStorage.getItem("docReader.selectedId") || "",
+      editing: false,
       editingText: "",
-      editingSavingId: "",
-      libraryPointerSelecting: false,
-      libraryRenderDeferred: false,
-      librarySelectionFlushTimer: null
+      editingSaving: false,
+      itemText: {},
+      itemTextLoading: "",
+      libraryRenderSignature: "",
+      workspaceSignature: "",
+      audioFileAction: "",
+      importAction: "",
+      nativeHelperAction: "",
+      inspectorOpen: localStorage.getItem("docReader.inspector") === "open",
+      libraryOpen: false,
+      activeView: localStorage.getItem("docReader.historyView") || "all",
+      libraryQuery: localStorage.getItem("docReader.libraryQuery") || ""
     };
-    const statusEl = document.getElementById("status");
-    const libraryEl = document.getElementById("library");
-    const libraryCountEl = document.getElementById("libraryCount");
-    const libraryTitleEl = document.getElementById("libraryTitle");
-    const librarySearchEl = document.getElementById("librarySearch");
-    const errorEl = document.getElementById("error");
-    const textEl = document.getElementById("text");
-    const fileEl = document.getElementById("file");
-    const audioFileEl = document.getElementById("audioFile");
-    const audioTimestampsEl = document.getElementById("audioTimestamps");
-    const audioFileStatusEl = document.getElementById("audioFileStatus");
-    const pauseBtn = document.getElementById("pause");
-    const stopBtn = document.getElementById("stop");
-    const voiceEl = document.getElementById("voice");
-    const voiceStatusEl = document.getElementById("voiceStatus");
-    const readRateEl = document.getElementById("readRate");
-    const readRateValueEl = document.getElementById("readRateValue");
-    const dictationEnabledEl = document.getElementById("dictationEnabled");
-    const dictationStatusEl = document.getElementById("dictationStatus");
-    const dictationMeterEl = document.getElementById("dictationMeter");
-    const dictationRecordingDebugEl = document.getElementById("dictationRecordingDebug");
-    const dictationRecordingStatusEl = document.getElementById("dictationRecordingStatus");
-    const dictationRecordingAudioEl = document.getElementById("dictationRecordingAudio");
-    const nativeHelperToggleEl = document.getElementById("nativeHelperToggle");
-    const nativeHelperResetEl = document.getElementById("nativeHelperReset");
-    const microphoneEl = document.getElementById("microphone");
-    const microphoneStatusEl = document.getElementById("microphoneStatus");
-    const showAllBtn = document.getElementById("showAll");
-    const showReadingsBtn = document.getElementById("showReadings");
-    const showDictationsBtn = document.getElementById("showDictations");
-    const showClawdadBtn = document.getElementById("showClawdad");
-    const runAnalysisBtn = document.getElementById("runAnalysis");
-    const sttWordsEl = document.getElementById("sttWords");
-    const ttsWordsEl = document.getElementById("ttsWords");
-    const analyzedItemsEl = document.getElementById("analyzedItems");
-    const openItemsEl = document.getElementById("openItems");
-    const analysisSummaryEl = document.getElementById("analysisSummary");
-    const topicMapEl = document.getElementById("topicMap");
-    state.audioFileAction = "";
-    state.nativeHelperAction = "";
+
+    const $ = (id) => document.getElementById(id);
+    const statusEl = $("status");
+    const libraryEl = $("library");
+    const librarySidebarEl = $("librarySidebar");
+    const libraryToggleEl = $("libraryToggle");
+    const libraryCountEl = $("libraryCount");
+    const libraryTitleEl = $("libraryTitle");
+    const librarySearchEl = $("librarySearch");
+    const scrimEl = $("scrim");
+    const errorEl = $("error");
+    const textEl = $("text");
+    const itemViewEl = $("itemView");
+    const itemViewTextEl = $("itemViewText");
+    const itemEditorEl = $("itemEditor");
+    const itemNoticeEl = $("itemNotice");
+    const workspaceKindEl = $("workspaceKind");
+    const workspaceTitleEl = $("workspaceTitle");
+    const workspaceMetaEl = $("workspaceMeta");
+    const copyItemBtn = $("copyItem");
+    const editItemBtn = $("editItem");
+    const saveItemBtn = $("saveItem");
+    const cancelEditBtn = $("cancelEdit");
+    const fileEl = $("file");
+    const fileLabelEl = $("fileLabel");
+    const audioFileEl = $("audioFile");
+    const audioFileLabelEl = $("audioFileLabel");
+    const audioTimestampsEl = $("audioTimestamps");
+    const audioFileStatusEl = $("audioFileStatus");
+    const newTextBtn = $("newText");
+    const readTextBtn = $("readText");
+    const pauseBtn = $("pause");
+    const stopBtn = $("stop");
+    const playbackStateTextEl = $("playbackStateText");
+    const voiceButtonEl = $("voiceButton");
+    const voiceButtonTextEl = $("voiceButtonText");
+    const voiceMenuEl = $("voiceMenu");
+    const voiceGroupsEl = $("voiceGroups");
+    const voiceOriginalToggleEl = $("voiceOriginalToggle");
+    const voiceOriginalListEl = $("voiceOriginalList");
+    const voiceOriginalSummaryEl = $("voiceOriginalSummary");
+    const voiceStatusEl = $("voiceStatus");
+    const engineStatusEl = $("engineStatus");
+    const readRateEl = $("readRate");
+    const readRateValueEl = $("readRateValue");
+    const dictationChipEl = $("dictationChip");
+    const dictationChipTextEl = $("dictationChipText");
+    const dictationEnabledEl = $("dictationEnabled");
+    const dictationHotkeyEl = $("dictationHotkey");
+    const dictationKeyChipsEl = $("dictationKeyChips");
+    const selectionKeyChipsEl = $("selectionKeyChips");
+    const hotkeyHintEl = $("hotkeyHint");
+    const hotkeyUi = { signature: "", busy: "", hotkeys: {}, recording: "", cleanup: null, timer: null, pendingModifier: "", heldModifiers: new Set() };
+    const hotkeyFields = {
+      dictation: { field: $("dictationKeyField"), caps: $("dictationKeyCaps"), prompt: $("dictationKeyPrompt"), error: $("dictationKeyError"), setting: "dictation_key", label: "dictation_label" },
+      selection: { field: $("selectionKeyField"), caps: $("selectionKeyCaps"), prompt: $("selectionKeyPrompt"), error: $("selectionKeyError"), setting: "selection_shortcut", label: "selection_label" }
+    };
+    // DOM event.code -> the key names the helpers understand (single keys only).
+    const HOTKEY_CODES = {
+      ControlLeft: "ctrl_l", ControlRight: "ctrl_r", AltLeft: "alt_l", AltRight: "alt_r", ShiftLeft: "shift_l", ShiftRight: "shift_r",
+      ScrollLock: "scroll_lock", Pause: "pause", Insert: "insert", CapsLock: "caps_lock", NumLock: "num_lock", PrintScreen: "print_screen",
+      ContextMenu: "menu", Home: "home", End: "end", PageUp: "page_up", PageDown: "page_down"
+    };
+    for (let n = 1; n <= 24; n += 1) HOTKEY_CODES[`F${n}`] = `f${n}`;
+    const CHORD_MODIFIERS = { ControlLeft: "<ctrl>", ControlRight: "<ctrl>", AltLeft: "<alt>", AltRight: "<alt>", ShiftLeft: "<shift>", ShiftRight: "<shift>" };
+    const HOTKEY_MESSAGES = {
+      win: "The Windows key (Command on a Mac) can't be used.",
+      typing: "Use a key you don't type with: Ctrl, Alt, Shift, F1 to F12, Scroll Lock, Pause, Insert, or a side mouse button.",
+      mouse: "Left, right, and middle click can't be used. The side buttons work.",
+      noModifier: "Add Ctrl, Alt, or Shift to it.",
+      badFinal: "Finish with a letter, number, function key, or Space.",
+      chordMouse: "Mouse buttons can't be part of this shortcut."
+    };
+    const dictationReadinessEl = $("dictationReadiness");
+    const dictationMeterEl = $("dictationMeter");
+    const dictationRecordingDebugEl = $("dictationRecordingDebug");
+    const dictationRecordingStatusEl = $("dictationRecordingStatus");
+    const dictationRecordingAudioEl = $("dictationRecordingAudio");
+    const nativeHelperToggleEl = $("nativeHelperToggle");
+    const nativeHelperResetEl = $("nativeHelperReset");
+    const microphoneEl = $("microphone");
+    const microphoneStatusEl = $("microphoneStatus");
+    const inspectorEl = $("inspector");
+    const inspectorToggleEl = $("inspectorToggle");
+    const inspectorCloseEl = $("inspectorClose");
+    const showAllBtn = $("showAll");
+    const showReadingsBtn = $("showReadings");
+    const showDictationsBtn = $("showDictations");
+    const showClawdadBtn = $("showClawdad");
+    const runAnalysisBtn = $("runAnalysis");
+    const sttWordsEl = $("sttWords");
+    const ttsWordsEl = $("ttsWords");
+    const analyzedItemsEl = $("analyzedItems");
+    const openItemsEl = $("openItems");
+    const analysisSummaryEl = $("analysisSummary");
+    const analysisDetailEl = $("analysisDetail");
+    const topicMapEl = $("topicMap");
+
     audioTimestampsEl.checked = localStorage.getItem("docReader.audioTimestamps") === "true";
-    state.activeView = localStorage.getItem("docReader.historyView") || "all";
-    state.libraryQuery = localStorage.getItem("docReader.libraryQuery") || "";
     librarySearchEl.value = state.libraryQuery;
+    textEl.value = localStorage.getItem("docReader.draft") || "";
+    setInspectorOpen(state.inspectorOpen, { persist: false });
 
     async function api(path, options = {}) {
       const response = await fetch(path, options);
@@ -4207,6 +4904,7 @@ INDEX_HTML = r"""<!doctype html>
       return payload;
     }
 
+    // ------------------------------------------------------------ formatting
     function timeLabel(seconds) {
       const total = Math.max(0, Math.floor(seconds || 0));
       const hours = Math.floor(total / 3600);
@@ -4227,65 +4925,123 @@ INDEX_HTML = r"""<!doctype html>
       return new Intl.NumberFormat().format(Math.max(0, Math.round(Number(value || 0))));
     }
 
+    function whenLabel(epochSeconds) {
+      const seconds = Number(epochSeconds || 0);
+      if (!Number.isFinite(seconds) || seconds <= 0) return "";
+      const date = new Date(seconds * 1000);
+      const now = new Date();
+      const sameDay = date.toDateString() === now.toDateString();
+      if (sameDay) return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
+      if (date.getFullYear() === now.getFullYear()) {
+        return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+      }
+      return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(date);
+    }
+
+    function baseName(path) {
+      const raw = String(path || "");
+      const parts = raw.split(/[\\/]/);
+      return parts[parts.length - 1] || raw;
+    }
+
+    function isDictationItem(item) {
+      return !!item && (item.kind === "dictation" || String(item.title || "").startsWith("Dictation:"));
+    }
+
+    function isClawdadItem(item) {
+      return !!item && (item.source === "clawdad" || String(item.kind || "").startsWith("clawdad-"));
+    }
+
+    function kindLabel(item) {
+      if (isDictationItem(item)) return isClawdadItem(item) ? "Clawdad dictation" : "Dictation";
+      if (isClawdadItem(item)) return "Clawdad";
+      if (item.kind === "document") return "Document";
+      return "Text";
+    }
+
+    function canShowText(item) {
+      if (!item) return false;
+      if (isDictationItem(item)) return true;
+      const path = String(item.source_path || "").toLowerCase();
+      return !(/\.(pdf|docx)$/.test(path));
+    }
+
+    // A saved title such as "Dictation: adding any kind of..." just repeats the
+    // preview, so the row shows the preview once instead of twice.
+    function displayText(item) {
+      const title = String(item.title || "").trim();
+      const preview = String(item.snippet || item.text || "").replace(/\s+/g, " ").trim();
+      const match = title.match(/^([A-Za-z][A-Za-z ]{1,28}):\s+(.*)$/);
+      const rest = match ? match[2] : title;
+      const restCore = rest.replace(/(\.\.\.|…)$/, "").trim();
+      const probe = restCore.slice(0, Math.min(restCore.length, 48)).toLowerCase();
+      const redundant = probe.length >= 8 && preview.toLowerCase().startsWith(probe);
+      if (redundant) {
+        return { primary: preview, secondary: "", titleIsPreview: true };
+      }
+      if (item.kind === "document") {
+        const name = (match ? match[2] : title) || baseName(item.source_path);
+        return { primary: name, secondary: preview && preview !== name ? preview : "", titleIsPreview: false };
+      }
+      return { primary: title, secondary: preview && preview !== title ? preview : "", titleIsPreview: false };
+    }
+
+    function workspaceTitleFor(item) {
+      if (item.kind === "document") {
+        return String(item.title || baseName(item.source_path) || "Document").replace(/^Document:\s+/, "");
+      }
+      const display = displayText(item);
+      if (display.titleIsPreview) {
+        const when = whenLabel(item.created_at);
+        return when ? `${kindLabel(item)} from ${when}` : kindLabel(item);
+      }
+      return display.primary || kindLabel(item);
+    }
+
+    function friendlyStatus(status) {
+      const text = String(status || "Ready.");
+      const failure = text.match(/^(?:RuntimeError|Error|OSError|ValueError):\s*(.*)$/);
+      if (!failure) return text;
+      const detail = failure[1];
+      if (/network error|Max retries|Connection refused|timed out/i.test(detail)) {
+        return "Speech service is not reachable. Check Details for engine status.";
+      }
+      return `Playback failed: ${detail.slice(0, 140)}`;
+    }
+
+    // ------------------------------------------------------------ render
     function render(data) {
-      const previousDictationCount = state.data && state.data.dictations
-        ? state.data.dictations.length
-        : 0;
+      const previousDictationCount = state.data && state.data.dictations ? state.data.dictations.length : 0;
       state.data = data;
-      statusEl.textContent = data.status || "Ready.";
+      statusEl.textContent = friendlyStatus(data.status);
+      document.body.dataset.state = data.running ? "reading" : (data.paused ? "paused" : "idle");
       renderVoice(data.tts || {});
       renderReadRate(data.settings || {});
       renderDictation(data.stt || {});
       renderSignalMap(data.metrics || {}, data.analysis || {});
-      pauseBtn.disabled = !data.running && !data.paused;
-      pauseBtn.textContent = data.paused ? "Resume" : "Pause";
-      stopBtn.disabled = !data.running && !data.paused;
-
       const library = data.library || data.items || [];
       const dictations = data.dictations || [];
-      const preserveLibraryDom = shouldPreserveLibraryDom();
-      if (!preserveLibraryDom && dictations.length > previousDictationCount) {
-        setActiveView("dictations");
-        return;
+      if (dictations.length > previousDictationCount && previousDictationCount > 0 && state.activeView !== "dictations") {
+        state.activeView = "dictations";
+        localStorage.setItem("docReader.historyView", state.activeView);
       }
-      if (preserveLibraryDom) {
-        state.libraryRenderDeferred = true;
-      } else {
-        renderLibrary(library);
-      }
+      renderLibrary(library);
+      renderWorkspace(library);
+      renderPlayback(data, library);
     }
 
-    function renderSignalMap(metrics, analysis) {
-      const styleMap = analysis.style_map || {};
-      const completion = styleMap.completion || {};
-      sttWordsEl.textContent = numberLabel(metrics.stt_words);
-      ttsWordsEl.textContent = numberLabel(metrics.tts_words);
-      analyzedItemsEl.textContent = numberLabel(analysis.items_analyzed);
-      openItemsEl.textContent = numberLabel(completion.open || 0);
-      runAnalysisBtn.disabled = !!analysis.running;
-      runAnalysisBtn.textContent = analysis.running ? "Analyzing" : "Analyze";
-      const pending = Number(analysis.pending_items || 0);
-      const summary = analysis.latest_summary || "";
-      const backend = analysis.backend ? `${analysis.backend} / ${analysis.model || "local"}` : "local";
-      analysisSummaryEl.textContent = summary
-        ? `${summary} / ${backend} / ${numberLabel(pending)} pending`
-        : `${backend} / ${numberLabel(pending)} pending`;
-      topicMapEl.innerHTML = "";
-      const topics = Array.isArray(styleMap.top_topics) ? styleMap.top_topics.slice(0, 8) : [];
-      for (const topic of topics) {
-        const pill = document.createElement("span");
-        pill.className = "topic-pill";
-        pill.textContent = `${topic.term} ${topic.count}`;
-        topicMapEl.appendChild(pill);
-      }
+    function currentItems() {
+      const data = state.data || {};
+      return data.library || data.items || [];
     }
 
-    function setActiveView(view) {
-      state.activeView = ["readings", "dictations", "clawdad"].includes(view) ? view : "all";
-      localStorage.setItem("docReader.historyView", state.activeView);
-      renderLibraryFromState();
+    function selectedItem(items) {
+      const list = items || currentItems();
+      if (!state.selectedId) return null;
+      return list.find((item) => item.id === state.selectedId) || null;
     }
 
+    // ------------------------------------------------------------ library
     function filteredLibraryItems(items) {
       const query = String(state.libraryQuery || "").trim().toLowerCase();
       return items.filter((item) => {
@@ -4293,90 +5049,59 @@ INDEX_HTML = r"""<!doctype html>
         if (state.activeView === "dictations" && !isDictationItem(item)) return false;
         if (state.activeView === "clawdad" && !isClawdadItem(item)) return false;
         if (!query) return true;
-        return [item.title, item.snippet, item.kind, item.source]
+        return [item.title, item.snippet, item.text, item.kind, item.source]
           .some((value) => String(value || "").toLowerCase().includes(query));
       });
     }
 
     function renderLibrary(items) {
-      state.libraryRenderDeferred = false;
       const allItems = Array.isArray(items) ? items : [];
       const filtered = filteredLibraryItems(allItems);
-      libraryEl.innerHTML = "";
-      libraryCountEl.textContent = `${countLabel(filtered.length)} / ${allItems.length} total`;
+      const readings = allItems.filter((item) => !isDictationItem(item) && !isClawdadItem(item)).length;
+      const dictations = allItems.filter(isDictationItem).length;
+      const clawdad = allItems.filter(isClawdadItem).length;
+
+      for (const [button, view, label, count] of [
+        [showAllBtn, "all", "All", allItems.length],
+        [showReadingsBtn, "readings", "Readings", readings],
+        [showDictationsBtn, "dictations", "Dictations", dictations],
+        [showClawdadBtn, "clawdad", "Clawdad", clawdad]
+      ]) {
+        const active = state.activeView === view;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", String(active));
+        button.textContent = `${label} ${count}`;
+      }
       libraryTitleEl.textContent =
         state.activeView === "readings" ? "Readings" :
         state.activeView === "dictations" ? "Dictations" :
-        state.activeView === "clawdad" ? "Clawdad" :
-        "Library";
-      showAllBtn.classList.toggle("active", state.activeView === "all");
-      showReadingsBtn.classList.toggle("active", state.activeView === "readings");
-      showDictationsBtn.classList.toggle("active", state.activeView === "dictations");
-      showClawdadBtn.classList.toggle("active", state.activeView === "clawdad");
-      showAllBtn.setAttribute("aria-selected", String(state.activeView === "all"));
-      showReadingsBtn.setAttribute("aria-selected", String(state.activeView === "readings"));
-      showDictationsBtn.setAttribute("aria-selected", String(state.activeView === "dictations"));
-      showClawdadBtn.setAttribute("aria-selected", String(state.activeView === "clawdad"));
-      showAllBtn.textContent = `All ${allItems.length}`;
-      showReadingsBtn.textContent = `Readings ${allItems.filter((item) => !isDictationItem(item) && !isClawdadItem(item)).length}`;
-      showDictationsBtn.textContent = `Dictations ${allItems.filter(isDictationItem).length}`;
-      showClawdadBtn.textContent = `Clawdad ${allItems.filter(isClawdadItem).length}`;
-      if (filtered.length === 0) {
-        libraryEl.appendChild(emptyCard("No matching library cards."));
+        state.activeView === "clawdad" ? "Clawdad" : "Library";
+      libraryCountEl.textContent = filtered.length === allItems.length
+        ? `${numberLabel(allItems.length)} ${allItems.length === 1 ? "item" : "items"}`
+        : `${numberLabel(filtered.length)} of ${numberLabel(allItems.length)}`;
+
+      const signature = JSON.stringify([
+        state.activeView, state.libraryQuery, state.selectedId,
+        filtered.map((item) => [item.id, item.title, item.updated_at, item.playing, item.paused, item.completed, item.word_count])
+      ]);
+      if (signature === state.libraryRenderSignature) return;
+      state.libraryRenderSignature = signature;
+
+      const scrollTop = libraryEl.scrollTop;
+      libraryEl.innerHTML = "";
+      if (allItems.length === 0) {
+        libraryEl.appendChild(emptyCard("Nothing saved yet. Read some text, import a document, or dictate to build your library."));
         return;
       }
-
+      if (filtered.length === 0) {
+        const query = String(state.libraryQuery || "").trim();
+        libraryEl.appendChild(emptyCard(query ? `No items match "${query}".` : "No items in this category yet."));
+        return;
+      }
       for (const item of filtered) {
-        libraryEl.appendChild(makeLibraryCard(item));
+        libraryEl.appendChild(makeRow(item));
       }
-    }
-
-    function renderLibraryFromState() {
-      const data = state.data || {};
-      renderLibrary(data.library || data.items || []);
-    }
-
-    function shouldPreserveLibraryDom() {
-      return !!state.editingItemId || state.libraryPointerSelecting || libraryHasTextSelection();
-    }
-
-    function libraryHasTextSelection() {
-      const selection = window.getSelection ? window.getSelection() : null;
-      if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
-      return nodeInsideLibrary(selection.anchorNode) || nodeInsideLibrary(selection.focusNode);
-    }
-
-    function nodeInsideLibrary(node) {
-      if (!node) return false;
-      const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-      return !!element && libraryEl.contains(element);
-    }
-
-    function flushDeferredLibraryRender() {
-      if (!state.libraryRenderDeferred || shouldPreserveLibraryDom()) return;
-      renderLibraryFromState();
-    }
-
-    function queueDeferredLibraryFlush(delay = 140) {
-      if (state.librarySelectionFlushTimer) {
-        window.clearTimeout(state.librarySelectionFlushTimer);
-      }
-      state.librarySelectionFlushTimer = window.setTimeout(() => {
-        state.librarySelectionFlushTimer = null;
-        flushDeferredLibraryRender();
-      }, delay);
-    }
-
-    function isDictationItem(item) {
-      return item && (item.kind === "dictation" || String(item.title || "").startsWith("Dictation:"));
-    }
-
-    function isClawdadItem(item) {
-      return item && (item.source === "clawdad" || String(item.kind || "").startsWith("clawdad-"));
-    }
-
-    function countLabel(count) {
-      return `${count} ${count === 1 ? "card" : "cards"}`;
+      libraryEl.scrollTop = scrollTop;
     }
 
     function emptyCard(text) {
@@ -4386,245 +5111,518 @@ INDEX_HTML = r"""<!doctype html>
       return empty;
     }
 
-    function makeLibraryCard(item) {
-      if (isDictationItem(item)) {
-        return makeDictationCard(item);
+    function makeRow(item) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "row-item" + (item.playing || item.paused ? " live" : "");
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-selected", String(item.id === state.selectedId));
+      row.dataset.itemId = item.id;
+      row.tabIndex = item.id === state.selectedId || !state.selectedId ? 0 : -1;
+
+      const display = displayText(item);
+      const primary = document.createElement("div");
+      primary.className = "row-primary";
+      primary.textContent = display.primary;
+      row.appendChild(primary);
+      if (display.secondary) {
+        const secondary = document.createElement("div");
+        secondary.className = "row-secondary";
+        secondary.textContent = display.secondary;
+        row.appendChild(secondary);
       }
-      return makeReadingCard(item);
-    }
 
-    function makeReadingCard(item) {
-      const card = document.createElement("article");
-      card.className = "card" + (item.playing || item.paused ? " active" : "");
-
-      const top = document.createElement("div");
-      top.className = "card-top";
-
-      const info = document.createElement("div");
-      const title = document.createElement("div");
-      title.className = "title";
-      title.textContent = item.title;
       const meta = document.createElement("div");
-      meta.className = "meta";
+      meta.className = "row-meta";
+      const parts = [kindLabel(item)];
+      if (item.word_count) parts.push(`${numberLabel(item.word_count)} words`);
+      const when = whenLabel(item.created_at);
+      if (when) parts.push(when);
+      if (!isDictationItem(item)) {
+        if (item.completed) parts.push("Finished");
+        else if (Number(item.last_seconds || 0) > 0 && !item.playing && !item.paused) parts.push(`At ${timeLabel(item.last_seconds)}`);
+      }
       const audio = item.audio || {};
-      const audioLabel = audio.state && audio.state !== "none" ? ` / audio ${audio.state}` : "";
-      const sourceLabel = isClawdadItem(item) ? "Clawdad" : (item.kind === "document" ? "Document" : "Text");
-      const wordsLabel = item.word_count ? ` / ${numberLabel(item.word_count)} words` : "";
-      meta.textContent = `${sourceLabel} / ${item.completed ? "Complete" : timeLabel(item.last_seconds)}${wordsLabel}${audioLabel}`;
-      info.append(title, meta);
+      if (audio.state && audio.state !== "none" && audio.state !== "ready") parts.push(`Audio ${audio.state}`);
+      for (const part of parts) {
+        const span = document.createElement("span");
+        span.textContent = part;
+        meta.appendChild(span);
+      }
+      if (item.playing || item.paused) {
+        const live = document.createElement("span");
+        live.className = "live-tag" + (item.paused ? " paused" : "");
+        live.textContent = item.playing ? "Playing" : "Paused";
+        meta.appendChild(live);
+      }
+      row.appendChild(meta);
 
-      const play = document.createElement("button");
-      play.textContent = item.playing ? "Pause" : (item.paused ? "Resume" : "Play");
-      play.className = item.playing || item.paused ? "" : "primary";
-      play.addEventListener("click", async () => {
-        try {
-          errorEl.textContent = "";
-          if (item.playing || item.paused) {
-            render(await api(item.playing ? "/api/pause" : `/api/items/${encodeURIComponent(item.id)}/play`, { method: "POST" }));
-          } else {
-            render(await api(`/api/items/${encodeURIComponent(item.id)}/play`, { method: "POST" }));
-          }
-        } catch (error) {
-          errorEl.textContent = error.message;
+      row.addEventListener("click", () => selectItem(item.id));
+      return row;
+    }
+
+    function selectItem(itemId, { focusWorkspace = false } = {}) {
+      if (state.editing && state.selectedId && state.selectedId !== itemId) {
+        if (!confirmDiscardEdit()) return;
+      }
+      state.selectedId = itemId || "";
+      localStorage.setItem("docReader.selectedId", state.selectedId);
+      state.workspaceSignature = "";
+      renderLibrary(currentItems());
+      renderWorkspace(currentItems());
+      renderPlayback(state.data || {}, currentItems());
+      if (state.libraryOpen) setLibraryOpen(false, { restoreFocus: false });
+      if (focusWorkspace) $("workspaceSurface").focus();
+    }
+
+    function confirmDiscardEdit() {
+      if (state.editingSaving) return false;
+      const original = state.itemText[state.selectedId] ? state.itemText[state.selectedId].text : "";
+      if (String(state.editingText || "").trim() === String(original || "").trim()) {
+        exitEditMode();
+        return true;
+      }
+      const discard = window.confirm("Discard unsaved changes to this item?");
+      if (discard) exitEditMode();
+      return discard;
+    }
+
+    function moveRowFocus(direction) {
+      const rows = Array.from(libraryEl.querySelectorAll(".row-item"));
+      if (rows.length === 0) return;
+      const current = rows.indexOf(document.activeElement);
+      const next = current < 0 ? 0 : Math.max(0, Math.min(rows.length - 1, current + direction));
+      rows.forEach((row, index) => { row.tabIndex = index === next ? 0 : -1; });
+      rows[next].focus();
+    }
+
+    // ------------------------------------------------------------ workspace
+    function renderWorkspace(items) {
+      const item = selectedItem(items);
+      if (!item) {
+        if (state.selectedId) {
+          // The selected item was removed; fall back to the draft.
+          state.selectedId = "";
+          localStorage.setItem("docReader.selectedId", "");
         }
+        exitEditMode({ rerender: false });
+        showDraftWorkspace();
+        return;
+      }
+      const signature = JSON.stringify([item.id, item.title, item.updated_at, item.word_count, item.completed, state.editing, state.editingSaving]);
+      if (signature === state.workspaceSignature) return;
+      state.workspaceSignature = signature;
+
+      workspaceKindEl.textContent = kindLabel(item) + (whenLabel(item.created_at) ? ` · ${whenLabel(item.created_at)}` : "");
+      workspaceTitleEl.textContent = workspaceTitleFor(item);
+      const metaParts = [];
+      if (item.word_count) metaParts.push(`${numberLabel(item.word_count)} words`);
+      if (item.kind === "document") metaParts.push(baseName(item.source_path));
+      if (!isDictationItem(item)) {
+        if (item.completed) metaParts.push("Finished reading");
+        else if (Number(item.last_seconds || 0) > 0) metaParts.push(`Resumes at ${timeLabel(item.last_seconds)}`);
+      }
+      workspaceMetaEl.textContent = metaParts.join(" · ") || "Saved item";
+
+      const textable = canShowText(item);
+      textEl.hidden = true;
+      copyItemBtn.hidden = !textable || state.editing;
+      editItemBtn.hidden = !textable || state.editing;
+      saveItemBtn.hidden = !state.editing;
+      cancelEditBtn.hidden = !state.editing;
+      saveItemBtn.disabled = state.editingSaving;
+      cancelEditBtn.disabled = state.editingSaving;
+      saveItemBtn.textContent = state.editingSaving ? "Saving..." : "Save";
+
+      if (!textable) {
+        itemViewEl.hidden = true;
+        itemEditorEl.hidden = true;
+        itemNoticeEl.hidden = false;
+        itemNoticeEl.textContent = `${baseName(item.source_path)} is read directly by the speech engine. A text preview is not available for this file type, but playback, pause, and resume work as usual.`;
+        return;
+      }
+      itemNoticeEl.hidden = true;
+      if (state.editing) {
+        itemViewEl.hidden = true;
+        itemEditorEl.hidden = false;
+        itemEditorEl.disabled = state.editingSaving;
+        if (itemEditorEl.value !== state.editingText) itemEditorEl.value = state.editingText;
+      } else {
+        itemEditorEl.hidden = true;
+        itemViewEl.hidden = false;
+        loadItemText(item).then((text) => {
+          if (state.selectedId !== item.id || state.editing) return;
+          if (itemViewTextEl.textContent !== text) itemViewTextEl.textContent = text;
+        }).catch((error) => {
+          if (state.selectedId === item.id) errorEl.textContent = `Could not load text: ${error.message}`;
+        });
+      }
+    }
+
+    function showDraftWorkspace() {
+      workspaceKindEl.textContent = "New text";
+      workspaceTitleEl.textContent = "Untitled";
+      workspaceMetaEl.textContent = textEl.value.trim()
+        ? `${numberLabel(textEl.value.trim().split(/\s+/).length)} words · draft is kept in this browser`
+        : "Paste or type, then press Read text.";
+      textEl.hidden = false;
+      itemViewEl.hidden = true;
+      itemEditorEl.hidden = true;
+      itemNoticeEl.hidden = true;
+      copyItemBtn.hidden = true;
+      editItemBtn.hidden = true;
+      saveItemBtn.hidden = true;
+      cancelEditBtn.hidden = true;
+      state.workspaceSignature = "draft";
+    }
+
+    const itemTextRequests = new Map();
+    async function loadItemText(item) {
+      const cached = state.itemText[item.id];
+      if (cached && cached.updated_at === item.updated_at) return cached.text;
+      if (isDictationItem(item) && typeof item.text === "string") {
+        state.itemText[item.id] = { text: item.text, updated_at: item.updated_at };
+        return item.text;
+      }
+      if (itemTextRequests.has(item.id)) return itemTextRequests.get(item.id);
+      const request = api(`/api/items/${encodeURIComponent(item.id)}/text`).then((payload) => {
+        const text = String(payload.text || "");
+        state.itemText[item.id] = { text, updated_at: item.updated_at };
+        return text;
       });
-
-      top.append(info, play);
-
-      const snippet = document.createElement("div");
-      snippet.className = "snippet";
-      snippet.textContent = item.snippet || item.source_path || "";
-      card.append(top, snippet);
-      return card;
+      itemTextRequests.set(item.id, request);
+      try { return await request; }
+      finally { itemTextRequests.delete(item.id); }
     }
 
-    function makeDictationCard(item) {
-      const card = document.createElement("article");
-      card.className = "card";
-
-      const top = document.createElement("div");
-      top.className = "card-top";
-
-      const info = document.createElement("div");
-      const title = document.createElement("div");
-      title.className = "title";
-      title.textContent = item.title;
-      const meta = document.createElement("div");
-      meta.className = "meta";
-      const wordsLabel = item.word_count ? ` / ${numberLabel(item.word_count)} words` : "";
-      meta.textContent = `${isClawdadItem(item) ? "Clawdad dictation" : "Dictation"}${wordsLabel}`;
-      info.append(title, meta);
-
-      const actions = document.createElement("div");
-      actions.className = "card-actions";
-      const editing = state.editingItemId === item.id;
-      const saving = state.editingSavingId === item.id;
-      if (editing) {
-        const save = document.createElement("button");
-        save.className = "icon-button primary";
-        save.type = "button";
-        save.title = saving ? "Saving dictation" : "Save dictation";
-        save.disabled = saving;
-        save.setAttribute("aria-label", save.title);
-        save.innerHTML = icon("save");
-        save.addEventListener("click", () => saveDictationEdit(item));
-
-        const cancel = document.createElement("button");
-        cancel.className = "icon-button";
-        cancel.type = "button";
-        cancel.title = "Cancel edit";
-        cancel.disabled = saving;
-        cancel.setAttribute("aria-label", "Cancel edit");
-        cancel.innerHTML = icon("x");
-        cancel.addEventListener("click", cancelDictationEdit);
-        actions.append(save, cancel);
-      } else {
-        const copy = document.createElement("button");
-        copy.className = "icon-button";
-        copy.type = "button";
-        copy.title = "Copy dictation";
-        copy.disabled = !!state.editingItemId;
-        copy.setAttribute("aria-label", "Copy dictation");
-        copy.innerHTML = icon("copy");
-        copy.addEventListener("click", async () => {
-          try {
-            errorEl.textContent = "";
-            const payload = await api(`/api/items/${encodeURIComponent(item.id)}/text`);
-            await navigator.clipboard.writeText(payload.text || "");
-            showCopied(copy);
-          } catch (error) {
-            errorEl.textContent = error.message;
-          }
-        });
-
-        const edit = document.createElement("button");
-        edit.className = "icon-button";
-        edit.type = "button";
-        edit.title = "Edit dictation";
-        edit.disabled = !!state.editingItemId;
-        edit.setAttribute("aria-label", "Edit dictation");
-        edit.innerHTML = icon("edit");
-        edit.addEventListener("click", () => beginDictationEdit(item));
-        actions.append(copy, edit);
-      }
-
-      top.append(info, actions);
-
-      if (editing) {
-        const editor = document.createElement("textarea");
-        editor.className = "dictation-edit";
-        editor.dataset.itemId = item.id;
-        editor.value = state.editingText;
-        editor.disabled = saving;
-        editor.addEventListener("input", () => {
-          state.editingText = editor.value;
-        });
-        editor.addEventListener("keydown", (event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault();
-            saveDictationEdit(item);
-          }
-        });
-        card.append(top, editor);
-      } else {
-        const snippet = document.createElement("div");
-        snippet.className = "dictation-text";
-        snippet.textContent = item.text || item.snippet || "";
-        card.append(top, snippet);
-      }
-      return card;
-    }
-
-    function beginDictationEdit(item) {
-      state.editingItemId = item.id;
-      state.editingText = item.text || item.snippet || "";
-      state.editingSavingId = "";
-      renderLibrary((state.data && (state.data.library || state.data.items)) || []);
-      window.requestAnimationFrame(() => {
-        const editor = Array.from(libraryEl.querySelectorAll("textarea.dictation-edit"))
-          .find((element) => element.dataset.itemId === item.id);
-        if (!editor) return;
-        editor.focus();
-        editor.setSelectionRange(editor.value.length, editor.value.length);
+    function enterEditMode() {
+      const item = selectedItem();
+      if (!item || !canShowText(item)) return;
+      loadItemText(item).then((text) => {
+        if (state.selectedId !== item.id) return;
+        state.editing = true;
+        state.editingText = text;
+        state.editingSaving = false;
+        state.workspaceSignature = "";
+        renderWorkspace(currentItems());
+        itemEditorEl.focus();
+        itemEditorEl.setSelectionRange(itemEditorEl.value.length, itemEditorEl.value.length);
+      }).catch((error) => {
+        errorEl.textContent = `Could not load text for editing: ${error.message}`;
       });
     }
 
-    function cancelDictationEdit() {
-      state.editingItemId = "";
+    function exitEditMode({ rerender = true } = {}) {
+      if (state.editingSaving) return;
+      state.editing = false;
       state.editingText = "";
-      state.editingSavingId = "";
-      renderLibrary((state.data && (state.data.library || state.data.items)) || []);
+      state.editingSaving = false;
+      state.workspaceSignature = "";
+      if (rerender) renderWorkspace(currentItems());
     }
 
-    async function saveDictationEdit(item) {
+    async function saveEdit() {
+      const item = selectedItem();
+      if (!item || !state.editing) return;
       const text = String(state.editingText || "").trim();
       if (!text) {
-        errorEl.textContent = "Dictation text cannot be empty.";
+        errorEl.textContent = "Text cannot be empty.";
         return;
       }
       try {
         errorEl.textContent = "";
-        state.editingSavingId = item.id;
-        renderLibrary((state.data && (state.data.library || state.data.items)) || []);
+        state.editingSaving = true;
+        state.workspaceSignature = "";
+        renderWorkspace(currentItems());
         const payload = await api(`/api/items/${encodeURIComponent(item.id)}/text`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text })
         });
-        state.editingItemId = "";
-        state.editingText = "";
-        state.editingSavingId = "";
+        delete state.itemText[item.id];
+        state.editingSaving = false;
+        exitEditMode({ rerender: false });
         render(payload.state || state.data || {});
+        editItemBtn.focus();
       } catch (error) {
-        state.editingSavingId = "";
-        renderLibrary((state.data && (state.data.library || state.data.items)) || []);
+        state.editingSaving = false;
+        state.workspaceSignature = "";
+        renderWorkspace(currentItems());
         errorEl.textContent = error.message;
       }
     }
 
     function showCopied(button) {
+      const original = button.innerHTML;
       button.classList.add("copied");
-      button.innerHTML = icon("check");
+      button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+      button.setAttribute("aria-label", "Copied");
       window.setTimeout(() => {
         button.classList.remove("copied");
-        button.innerHTML = icon("copy");
+        button.innerHTML = original;
+        button.setAttribute("aria-label", "Copy text");
       }, 1100);
     }
 
-    function icon(name) {
-      if (name === "check") {
-        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+    // ------------------------------------------------------------ playback
+    function renderPlayback(data, items) {
+      const item = selectedItem(items);
+      const running = !!data.running;
+      const paused = !!data.paused;
+      if (!item) {
+        readTextBtn.textContent = "Read text";
+        readTextBtn.disabled = false;
+      } else if (item.playing) {
+        readTextBtn.textContent = "Playing";
+        readTextBtn.disabled = true;
+      } else if (item.paused) {
+        readTextBtn.textContent = "Resume";
+        readTextBtn.disabled = false;
+      } else {
+        readTextBtn.textContent = item.completed ? "Read again" : (Number(item.last_seconds || 0) > 0 ? "Resume" : "Play");
+        readTextBtn.disabled = false;
       }
-      if (name === "edit") {
-        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
-      }
-      if (name === "save") {
-        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>';
-      }
-      if (name === "x") {
-        return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
-      }
-      return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>';
+      pauseBtn.disabled = !running && !paused;
+      pauseBtn.textContent = paused ? "Resume" : "Pause";
+      stopBtn.disabled = !running && !paused;
+
+      const active = items.find((entry) => entry.id === data.active_id);
+      const activeTitle = active ? workspaceTitleFor(active) : "";
+      if (running) playbackStateTextEl.textContent = activeTitle ? `Playing · ${activeTitle}` : "Playing";
+      else if (paused) playbackStateTextEl.textContent = activeTitle ? `Paused · ${activeTitle}` : "Paused";
+      else playbackStateTextEl.textContent = "Ready";
     }
+
+    // ------------------------------------------------------------ voice, speed
+    const voiceUi = { voices: [], options: [], backend: "", voice: "", kokoroBackends: [], previewAudio: null, previewVoice: "", open: false, signature: "" };
 
     function renderVoice(tts) {
       const current = tts.backend || "auto";
+      voiceUi.backend = current;
+      voiceUi.voice = tts.kokoro_voice || "";
+      voiceUi.kokoroBackends = tts.kokoro_backends || ["local-kokoro"];
+      const voices = Array.isArray(tts.voices) ? tts.voices : [];
       const options = tts.options || [];
-      if (voiceEl.dataset.loaded !== "true") {
-        voiceEl.innerHTML = "";
-        for (const option of options) {
-          const entry = document.createElement("option");
-          entry.value = option.value;
-          entry.textContent = option.label;
-          voiceEl.appendChild(entry);
-        }
-        voiceEl.dataset.loaded = "true";
+      const usesKokoro = voiceUi.kokoroBackends.includes(current);
+      const voiceName = (voices.find((v) => v.id === voiceUi.voice) || {}).name || tts.kokoro_voice_label || voiceUi.voice;
+      const voiceTitle = usesKokoro
+        ? (current === "local-kokoro" ? voiceName : `${voiceName} (${tts.label || current})`)
+        : (tts.label || current);
+      voiceButtonTextEl.textContent = voiceTitle;
+      const signature = JSON.stringify([voices, options]);
+      if (voiceUi.signature !== signature) {
+        voiceUi.signature = signature;
+        voiceUi.voices = voices;
+        voiceUi.options = options;
+        buildVoiceMenu();
       }
-      voiceEl.value = current;
+      syncVoiceSelection();
       const services = tts.services || {};
-      const remoteSpeech = services.umbra && services.umbra.ok ? "remote speech online" : "remote speech offline";
-      const localSpeech = services.mac && services.mac.ok ? "local speech online" : "local speech offline";
+      const local = services.mac || {};
+      const remote = services.umbra || {};
+      const localSpeech = local.ok ? "local speech online" : "local speech offline";
+      const remoteSpeech = remote.ok ? "remote speech online" : "remote speech offline";
+      const device = local.device && (local.device.cuda_device || local.device.requested);
+      renderReadiness(engineStatusEl, [
+        ["Voice", voiceTitle, "ok"],
+        ["Local speech", local.ok ? `Online${device ? ` · ${device}` : ""}` : "Offline", local.ok ? "ok" : "bad"],
+        ["Remote speech", remote.ok ? "Online" : "Not connected", remote.ok ? "ok" : "warn"]
+      ]);
       voiceStatusEl.textContent = `${tts.label || current} / ${localSpeech} / ${remoteSpeech}`;
+    }
+
+    function buildVoiceMenu() {
+      voiceGroupsEl.innerHTML = "";
+      const groups = [
+        ["American voices", (v) => v.accent === "US"],
+        ["British voices", (v) => v.accent === "UK"]
+      ];
+      for (const [title, match] of groups) {
+        const members = voiceUi.voices.filter(match);
+        if (!members.length) continue;
+        const heading = document.createElement("div");
+        heading.className = "voice-group-title";
+        heading.textContent = title;
+        const list = document.createElement("div");
+        list.className = "voice-list";
+        list.setAttribute("role", "listbox");
+        list.setAttribute("aria-label", title);
+        for (const voice of members) {
+          list.appendChild(makeVoiceOption(voice));
+        }
+        voiceGroupsEl.append(heading, list);
+      }
+      voiceOriginalListEl.innerHTML = "";
+      for (const option of voiceUi.options) {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "voice-option";
+        row.setAttribute("role", "option");
+        row.dataset.backend = option.value;
+        row.innerHTML = '<svg class="check" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+        const name = document.createElement("span");
+        name.className = "voice-name";
+        name.textContent = option.label;
+        row.appendChild(name);
+        row.addEventListener("click", () => chooseBackend(option.value));
+        voiceOriginalListEl.appendChild(row);
+      }
+    }
+
+    function makeVoiceOption(voice) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "voice-option";
+      row.setAttribute("role", "option");
+      row.dataset.voice = voice.id;
+      row.innerHTML = '<svg class="check" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+      const text = document.createElement("span");
+      const name = document.createElement("div");
+      name.className = "voice-name";
+      name.textContent = voice.name + (voice.default ? " (default)" : "");
+      const meta = document.createElement("div");
+      meta.className = "voice-meta";
+      meta.textContent = `${voice.accent === "UK" ? "British" : "American"}, ${voice.gender}`;
+      text.append(name, meta);
+      const preview = document.createElement("button");
+      preview.type = "button";
+      preview.className = "voice-preview";
+      preview.title = `Play a sample of ${voice.name}`;
+      preview.setAttribute("aria-label", `Play a sample of ${voice.name}`);
+      preview.innerHTML = playIcon();
+      preview.addEventListener("click", (event) => {
+        event.stopPropagation();
+        toggleVoicePreview(voice, preview);
+      });
+      row.append(text, preview);
+      row.addEventListener("click", () => chooseVoice(voice.id));
+      return row;
+    }
+
+    function playIcon() {
+      return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5v14l11-7z"/></svg>';
+    }
+
+    function stopIcon() {
+      return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+    }
+
+    function syncVoiceSelection() {
+      const usesKokoro = voiceUi.kokoroBackends.includes(voiceUi.backend);
+      for (const row of voiceMenuEl.querySelectorAll(".voice-option[data-voice]")) {
+        row.setAttribute("aria-selected", String(usesKokoro && row.dataset.voice === voiceUi.voice));
+      }
+      for (const row of voiceMenuEl.querySelectorAll(".voice-option[data-backend]")) {
+        row.setAttribute("aria-selected", String(row.dataset.backend === voiceUi.backend));
+      }
+      const currentOption = voiceUi.options.find((o) => o.value === voiceUi.backend);
+      voiceOriginalSummaryEl.textContent = currentOption ? currentOption.label : "";
+    }
+
+    function stopVoicePreview() {
+      if (voiceUi.previewAudio) {
+        try {
+          voiceUi.previewAudio.pause();
+          URL.revokeObjectURL(voiceUi.previewAudio.src);
+        } catch (_error) { /* ignore */ }
+      }
+      voiceUi.previewAudio = null;
+      voiceUi.previewVoice = "";
+      for (const button of voiceMenuEl.querySelectorAll(".voice-preview")) {
+        button.classList.remove("playing", "loading");
+        button.innerHTML = playIcon();
+        button.setAttribute("aria-label", button.title);
+      }
+    }
+
+    async function toggleVoicePreview(voice, button) {
+      if (voiceUi.previewVoice === voice.id) {
+        stopVoicePreview();
+        return;
+      }
+      stopVoicePreview();
+      voiceUi.previewVoice = voice.id;
+      button.classList.add("loading");
+      try {
+        const response = await fetch(`/api/voices/preview?voice=${encodeURIComponent(voice.id)}`);
+        if (!response.ok) {
+          let message = `HTTP ${response.status}`;
+          try { message = (await response.json()).error || message; } catch (_error) { /* ignore */ }
+          throw new Error(message);
+        }
+        const blob = await response.blob();
+        if (voiceUi.previewVoice !== voice.id) return;
+        const audio = new Audio(URL.createObjectURL(blob));
+        voiceUi.previewAudio = audio;
+        button.classList.remove("loading");
+        button.classList.add("playing");
+        button.innerHTML = stopIcon();
+        button.setAttribute("aria-label", `Stop sample of ${voice.name}`);
+        audio.addEventListener("ended", () => { if (voiceUi.previewAudio === audio) stopVoicePreview(); });
+        await audio.play();
+      } catch (error) {
+        stopVoicePreview();
+        errorEl.textContent = `Could not play a sample of ${voice.name}: ${error.message}`;
+      }
+    }
+
+    async function chooseVoice(voiceId) {
+      const backend = voiceUi.kokoroBackends.includes(voiceUi.backend) ? voiceUi.backend : "local-kokoro";
+      try {
+        errorEl.textContent = "";
+        render(await api("/api/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kokoro_voice: voiceId, speech_backend: backend })
+        }));
+        setVoiceMenuOpen(false, { restoreFocus: true });
+      } catch (error) {
+        errorEl.textContent = error.message;
+      }
+    }
+
+    async function chooseBackend(value) {
+      try {
+        errorEl.textContent = "";
+        render(await api("/api/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ speech_backend: value })
+        }));
+        setVoiceMenuOpen(false, { restoreFocus: true });
+      } catch (error) {
+        errorEl.textContent = error.message;
+      }
+    }
+
+    function setVoiceMenuOpen(open, { restoreFocus = false } = {}) {
+      voiceUi.open = !!open;
+      voiceMenuEl.hidden = !voiceUi.open;
+      voiceButtonEl.setAttribute("aria-expanded", String(voiceUi.open));
+      if (voiceUi.open) {
+        const selected = voiceMenuEl.querySelector('.voice-option[aria-selected="true"]:not([hidden])') || voiceMenuEl.querySelector(".voice-option");
+        if (selected && !selected.closest("[hidden]")) selected.focus();
+        else voiceMenuEl.querySelector(".voice-option")?.focus();
+      } else {
+        stopVoicePreview();
+        if (restoreFocus) voiceButtonEl.focus();
+      }
+    }
+
+    function renderReadiness(container, rows) {
+      const signature = JSON.stringify(rows);
+      if (container.dataset.signature === signature) return;
+      container.dataset.signature = signature;
+      container.innerHTML = "";
+      for (const [term, value, tone] of rows) {
+        if (!value) continue;
+        const dt = document.createElement("dt");
+        dt.textContent = term;
+        const dd = document.createElement("dd");
+        dd.textContent = value;
+        dd.className = tone || "";
+        container.append(dt, dd);
+      }
     }
 
     function normalizeReadRate(value) {
@@ -4636,41 +5634,298 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function readRateLabel(rate) {
-      return `${rate} WPM / ${(rate / 180).toFixed(2)}x`;
+      // The engine's speed multiplier is rate / 180 (clamped 0.5-2.0 by the reader).
+      const speed = Math.max(0.5, Math.min(2.0, rate / 180));
+      return `${rate} WPM / ${speed.toFixed(2)}x`;
     }
 
     function renderReadRate(settings) {
       const rate = normalizeReadRate(settings.read_rate || settings.readRate || 180);
-      if (document.activeElement !== readRateEl) {
-        readRateEl.value = String(rate);
-      }
+      if (document.activeElement !== readRateEl) readRateEl.value = String(rate);
       readRateValueEl.value = readRateLabel(normalizeReadRate(readRateEl.value));
       readRateValueEl.textContent = readRateValueEl.value;
     }
 
-    function renderDictation(stt) {
-      dictationEnabledEl.checked = !!stt.enabled;
+    // ------------------------------------------------------------ dictation
+    function dictationState(stt) {
+      const mic = stt.microphone || {};
       const service = stt.service || {};
+      const event = String(mic.last_event || "").toLowerCase();
+      if (!stt.enabled) return { key: "off", label: "Dictation off" };
+      if (mic.recording) return { key: "recording", label: "Recording" };
+      if (mic.recording_start_pending) return { key: "starting", label: "Starting microphone" };
+      if (event === "transcribing") return { key: "working", label: "Transcribing" };
+      if (!stt.ready) return { key: "unavailable", label: service.ok ? "Speech-to-text loading" : "Speech-to-text offline" };
+      if (!mic.native_helper_online) return { key: "helper-off", label: "Hotkey helper off" };
+      if (event.includes("failed") || event.includes("error") || event.includes("unavailable")) return { key: "error", label: "Last dictation failed" };
+      return { key: "ready", label: `Hold ${stt.hotkey || "the dictation key"} to dictate` };
+    }
+
+    function keyWord(token) {
+      const mac = (hotkeyUi.hotkeys.platform || "") === "macos";
+      const base = { ctrl: mac ? "Control" : "Ctrl", alt: mac ? "Option" : "Alt", shift: "Shift", cmd: mac ? "Command" : "Win", space: "Space" };
+      const clean = token.replace(/^<|>$/g, "");
+      if (base[clean]) return base[clean];
+      const side = clean.match(/^(ctrl|alt|shift)_(l|r)$/);
+      if (side) return `${side[2] === "l" ? "Left" : "Right"} ${base[side[1]]}`;
+      if (/^f\d+$/.test(clean)) return clean.toUpperCase();
+      if (clean === "mouse:x1") return "Mouse 4";
+      if (clean === "mouse:x2") return "Mouse 5";
+      return clean.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+
+    function renderKeycaps(container, label) {
+      container.innerHTML = "";
+      const parts = String(label || "").split("+").filter(Boolean);
+      parts.forEach((part, index) => {
+        if (index) {
+          const plus = document.createElement("span");
+          plus.className = "plus";
+          plus.textContent = "+";
+          container.appendChild(plus);
+        }
+        const cap = document.createElement("kbd");
+        cap.className = "keycap";
+        cap.textContent = part.trim();
+        container.appendChild(cap);
+      });
+    }
+
+    function stopHotkeyRecording() {
+      if (!hotkeyUi.recording) return;
+      const entry = hotkeyFields[hotkeyUi.recording];
+      hotkeyUi.recording = "";
+      if (hotkeyUi.cleanup) hotkeyUi.cleanup();
+      hotkeyUi.cleanup = null;
+      clearTimeout(hotkeyUi.timer);
+      entry.field.classList.remove("recording");
+      entry.field.setAttribute("aria-pressed", "false");
+      entry.prompt.hidden = true;
+      entry.caps.hidden = false;
+      renderKeycaps(entry.caps, hotkeyUi.hotkeys[entry.label]);
+    }
+
+    function finishHotkeyRecording(kind, value, problem) {
+      const entry = hotkeyFields[kind];
+      stopHotkeyRecording();
+      if (problem) {
+        entry.error.textContent = problem;
+        return;
+      }
+      chooseHotkey(entry.setting, value, entry.error);
+    }
+
+    function chordFinalKey(code) {
+      let match = code.match(/^Key([A-Z])$/);
+      if (match) return match[1].toLowerCase();
+      match = code.match(/^Digit(\d)$/);
+      if (match) return match[1];
+      match = code.match(/^F(\d{1,2})$/);
+      if (match) return `<f${match[1]}>`;
+      if (code === "Space") return "<space>";
+      return "";
+    }
+
+    function startHotkeyRecording(kind) {
+      if (hotkeyUi.recording === kind) {
+        stopHotkeyRecording();
+        return;
+      }
+      stopHotkeyRecording();
+      const entry = hotkeyFields[kind];
+      entry.error.textContent = "";
+      entry.field.classList.add("recording");
+      entry.field.setAttribute("aria-pressed", "true");
+      entry.caps.hidden = true;
+      entry.prompt.hidden = false;
+      entry.prompt.textContent = kind === "dictation" ? "Press a key or a side mouse button" : "Press a key combination";
+      hotkeyUi.recording = kind;
+      hotkeyUi.pendingModifier = "";
+      hotkeyUi.heldModifiers = new Set();
+
+      const previewChord = () => {
+        const held = ["<ctrl>", "<alt>", "<shift>"].filter((m) => hotkeyUi.heldModifiers.has(m));
+        entry.prompt.textContent = held.length ? `${held.map(keyWord).join(" + ")} + ...` : "Press a key combination";
+      };
+      const isWinKey = (event) => event.code.startsWith("Meta") || event.key === "Meta" || event.key === "OS";
+
+      const onKeyDown = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.key === "Escape") { stopHotkeyRecording(); return; }
+        if (event.repeat) return;
+        if (isWinKey(event)) { finishHotkeyRecording(kind, "", HOTKEY_MESSAGES.win); return; }
+        const modifier = CHORD_MODIFIERS[event.code];
+        if (kind === "dictation") {
+          if (modifier) {
+            hotkeyUi.pendingModifier = HOTKEY_CODES[event.code];
+            entry.prompt.textContent = `${keyWord(hotkeyUi.pendingModifier)} (release to use it)`;
+            return;
+          }
+          hotkeyUi.pendingModifier = "";
+          const single = HOTKEY_CODES[event.code];
+          finishHotkeyRecording(kind, single, single ? "" : HOTKEY_MESSAGES.typing);
+          return;
+        }
+        if (modifier) { hotkeyUi.heldModifiers.add(modifier); previewChord(); return; }
+        const mods = [];
+        if (event.ctrlKey) mods.push("<ctrl>");
+        if (event.altKey) mods.push("<alt>");
+        if (event.shiftKey) mods.push("<shift>");
+        if (!mods.length) { finishHotkeyRecording(kind, "", HOTKEY_MESSAGES.noModifier); return; }
+        const finalKey = chordFinalKey(event.code);
+        if (!finalKey) { finishHotkeyRecording(kind, "", HOTKEY_MESSAGES.badFinal); return; }
+        finishHotkeyRecording(kind, `${mods.join("+")}+${finalKey}`, "");
+      };
+      const onKeyUp = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (kind === "dictation") {
+          if (hotkeyUi.pendingModifier && HOTKEY_CODES[event.code] === hotkeyUi.pendingModifier) {
+            finishHotkeyRecording(kind, hotkeyUi.pendingModifier, "");
+          }
+          return;
+        }
+        const modifier = CHORD_MODIFIERS[event.code];
+        if (modifier) { hotkeyUi.heldModifiers.delete(modifier); previewChord(); }
+      };
+      const onMouseDown = (event) => {
+        if (event.button >= 3) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (kind === "dictation") finishHotkeyRecording(kind, event.button === 3 ? "mouse:x1" : "mouse:x2", "");
+          else finishHotkeyRecording(kind, "", HOTKEY_MESSAGES.chordMouse);
+          return;
+        }
+        if (entry.field.contains(event.target)) return; // the click handler toggles recording off
+        if (event.button !== 0 && kind === "dictation") { event.preventDefault(); finishHotkeyRecording(kind, "", HOTKEY_MESSAGES.mouse); return; }
+        stopHotkeyRecording();
+      };
+      const swallowSideButtons = (event) => { if (event.button >= 3) { event.preventDefault(); event.stopPropagation(); } };
+      const onBlur = () => stopHotkeyRecording();
+      document.addEventListener("keydown", onKeyDown, true);
+      document.addEventListener("keyup", onKeyUp, true);
+      document.addEventListener("mousedown", onMouseDown, true);
+      document.addEventListener("mouseup", swallowSideButtons, true);
+      document.addEventListener("auxclick", swallowSideButtons, true);
+      document.addEventListener("contextmenu", swallowSideButtons, true);
+      window.addEventListener("blur", onBlur);
+      hotkeyUi.cleanup = () => {
+        document.removeEventListener("keydown", onKeyDown, true);
+        document.removeEventListener("keyup", onKeyUp, true);
+        document.removeEventListener("mousedown", onMouseDown, true);
+        document.removeEventListener("mouseup", swallowSideButtons, true);
+        document.removeEventListener("auxclick", swallowSideButtons, true);
+        document.removeEventListener("contextmenu", swallowSideButtons, true);
+        window.removeEventListener("blur", onBlur);
+      };
+      hotkeyUi.timer = setTimeout(stopHotkeyRecording, 15000);
+      entry.field.focus();
+    }
+
+    function renderHotkeys(stt) {
+      const hotkeys = stt.hotkeys || {};
+      hotkeyUi.hotkeys = hotkeys;
+      for (const kind of Object.keys(hotkeyFields)) {
+        if (hotkeyUi.recording !== kind) renderKeycaps(hotkeyFields[kind].caps, hotkeys[hotkeyFields[kind].label]);
+      }
+      const groups = [
+        [dictationKeyChipsEl, "dictation_key", hotkeys.dictation_options || [], hotkeys.dictation_key],
+        [selectionKeyChipsEl, "selection_shortcut", hotkeys.selection_options || [], hotkeys.selection_shortcut]
+      ];
+      const signature = JSON.stringify(groups.map((g) => g[2]));
+      if (hotkeyUi.signature !== signature) {
+        hotkeyUi.signature = signature;
+        for (const [container, field, options] of groups) {
+          container.innerHTML = "";
+          for (const option of options) {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "hotkey-chip";
+            chip.setAttribute("role", "radio");
+            chip.dataset.value = option.value;
+            chip.textContent = option.label;
+            chip.addEventListener("click", () => chooseHotkey(field, option.value, container.closest(".hotkey-row").querySelector(".hotkey-error")));
+            container.appendChild(chip);
+          }
+        }
+      }
+      for (const [container, , , current] of groups) {
+        for (const chip of container.querySelectorAll(".hotkey-chip")) {
+          chip.setAttribute("aria-checked", String(chip.dataset.value === current));
+        }
+      }
+      const mic = stt.microphone || {};
+      hotkeyHintEl.textContent = hotkeyUi.busy
+        ? "Saving..."
+        : (mic.native_helper_online
+          ? "Click a key to change it. Changes apply right away."
+          : "Click a key to change it. Saved here; the helper uses them when it starts.");
+    }
+
+    async function chooseHotkey(field, value, errorSlot) {
+      hotkeyUi.busy = field;
+      const slot = errorSlot || errorEl;
+      try {
+        slot.textContent = "";
+        for (const entry of Object.values(hotkeyFields)) {
+          if (entry.setting === field) entry.error.textContent = "";
+        }
+        render(await api("/api/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ [field]: value })
+        }));
+      } catch (error) {
+        slot.textContent = error.message;
+      } finally {
+        hotkeyUi.busy = "";
+      }
+    }
+
+    hotkeyFields.dictation.field.addEventListener("click", () => startHotkeyRecording("dictation"));
+    hotkeyFields.selection.field.addEventListener("click", () => startHotkeyRecording("selection"));
+
+    function renderDictation(stt) {
+      if (document.activeElement !== dictationEnabledEl) dictationEnabledEl.checked = !!stt.enabled;
+      dictationHotkeyEl.textContent = stt.hotkey || "the dictation key";
+      renderHotkeys(stt);
+      const service = stt.service || {};
+      const mic = stt.microphone || {};
+      const current = dictationState(stt);
+      dictationChipEl.dataset.state = current.key;
+      dictationChipTextEl.textContent = current.label;
+
       const backendLabel = stt.backend === "mac-whisper"
         ? "local speech"
         : (stt.backend === "custom-whisper" ? "speech service" : "remote speech");
       const serviceLabel = service.ok ? `${backendLabel} online` : `${backendLabel} offline`;
       const modelLabel = stt.loaded ? "speech loaded" : (stt.ready ? "speech ready" : "speech unavailable");
-      const mic = stt.microphone || {};
+      const engineValue = !service.ok
+        ? `${stt.label || "Speech-to-text"} offline`
+        : (stt.loaded ? `${stt.label || "Speech-to-text"} loaded` : (stt.ready ? `${stt.label || "Speech-to-text"} ready` : `${stt.label || "Speech-to-text"} unavailable`));
+      const helperValue = state.nativeHelperAction
+        ? state.nativeHelperAction.replace(/^\w/, (c) => c.toUpperCase())
+        : (mic.native_helper_online ? "Running" : "Not running");
+      const permission = mic.authorization === "authorized" ? "Allowed" : (mic.authorization ? `${mic.authorization}` : "Unknown");
+      const rows = [
+        ["Engine", engineValue, service.ok && stt.ready ? "ok" : "bad"],
+        ["Helper", helperValue, mic.native_helper_online ? "ok" : "warn"],
+        ["Microphone", `${microphoneSummary(mic)} · ${permission}`, mic.authorization === "authorized" ? "ok" : "warn"],
+        ["Paste into apps", mic.accessibility_trusted ? "Allowed" : "Not allowed yet", mic.accessibility_trusted ? "ok" : "warn"],
+        ["Hotkey", mic.input_monitoring_trusted ? "Allowed" : "Allow Input Monitoring", mic.input_monitoring_trusted ? "ok" : "warn"],
+        ["Last event", mic.last_event || "", current.key === "error" ? "bad" : ""]
+      ];
+      renderReadiness(dictationReadinessEl, rows);
+      // Keep the one-line summary the older layout used, for scripts and tests that read it.
+      dictationReadinessEl.title = `${stt.label || "Speech-to-text"} / ${serviceLabel} / ${modelLabel}`;
+
       renderMicrophones(mic);
       renderNativeHelperToggle(mic);
-      const helperLabel = mic.recording
-        ? "recording"
-        : (
-          mic.recording_start_pending
-            ? "starting recorder"
-            : (state.nativeHelperAction || (mic.native_helper_online ? "helper online" : "helper offline"))
-        );
-      const inputLabel = mic.input_monitoring_trusted ? "hotkey allowed" : "allow Input Monitoring";
-      dictationStatusEl.textContent = `${stt.label || "Speech-to-text"} / ${serviceLabel} / ${modelLabel} / ${helperLabel} / ${inputLabel}`;
       const level = Math.max(0, Math.min(1, Number(mic.audio_level || 0)));
       const peak = Math.max(0, Math.min(1, Number(mic.audio_peak_level || 0)));
       dictationMeterEl.style.setProperty("--level", String(level));
+      dictationMeterEl.setAttribute("aria-valuenow", String(Math.round(level * 100)));
       dictationMeterEl.classList.toggle("active", !!mic.recording || !!mic.recording_start_pending);
       dictationMeterEl.title = `Mic level ${Math.round(level * 100)}%, peak ${Math.round(peak * 100)}%`;
       renderLastRecording(mic.last_recording || {});
@@ -4680,11 +5935,13 @@ INDEX_HTML = r"""<!doctype html>
     function renderAudioFileStatus(stt) {
       const busy = !!state.audioFileAction;
       const available = !!stt.enabled && !!stt.ready;
-      const label = stt.label || "Speech-to-text";
       audioFileEl.disabled = busy || !available;
-      audioFileStatusEl.textContent = state.audioFileAction || (
-        available ? `${label} ready` : (stt.enabled ? `${label} unavailable` : "Speech-to-text off")
-      );
+      audioFileLabelEl.classList.toggle("busy", busy || !available);
+      audioFileLabelEl.title = available
+        ? "Transcribe an audio or video file into a Dictation"
+        : (stt.enabled ? `${stt.label || "Speech-to-text"} is not available right now` : "Turn on dictation in Details to transcribe audio files");
+      const text = state.audioFileAction || state.importAction || "";
+      if (audioFileStatusEl.textContent !== text) audioFileStatusEl.textContent = text;
     }
 
     function renderNativeHelperToggle(mic) {
@@ -4693,18 +5950,11 @@ INDEX_HTML = r"""<!doctype html>
       nativeHelperToggleEl.disabled = busy;
       nativeHelperResetEl.disabled = busy;
       nativeHelperToggleEl.classList.toggle("running", online);
-      if (state.nativeHelperAction === "starting helper") {
-        nativeHelperToggleEl.textContent = "Starting...";
-      } else if (state.nativeHelperAction === "stopping helper") {
-        nativeHelperToggleEl.textContent = "Stopping...";
-      } else if (state.nativeHelperAction === "resetting helper") {
-        nativeHelperToggleEl.textContent = "Resetting...";
-      } else {
-        nativeHelperToggleEl.textContent = online ? "Stop Helper" : "Start Helper";
-      }
-      nativeHelperResetEl.textContent = state.nativeHelperAction === "resetting helper"
-        ? "Resetting..."
-        : "Reset";
+      if (state.nativeHelperAction === "starting helper") nativeHelperToggleEl.textContent = "Starting...";
+      else if (state.nativeHelperAction === "stopping helper") nativeHelperToggleEl.textContent = "Stopping...";
+      else if (state.nativeHelperAction === "resetting helper") nativeHelperToggleEl.textContent = "Resetting...";
+      else nativeHelperToggleEl.textContent = online ? "Stop helper" : "Start helper";
+      nativeHelperResetEl.textContent = state.nativeHelperAction === "resetting helper" ? "Resetting..." : "Reset";
     }
 
     function renderLastRecording(recording) {
@@ -4716,12 +5966,18 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       const peak = Math.round(Math.max(0, Math.min(1, Number(recording.peak_level || 0))) * 100);
-      dictationRecordingStatusEl.textContent =
-        `${byteLabel(recording.bytes)} / ${timeLabel(recording.seconds)} / peak ${peak}%`;
+      dictationRecordingStatusEl.textContent = `${byteLabel(recording.bytes)} / ${timeLabel(recording.seconds)} / peak ${peak}%`;
       if (dictationRecordingAudioEl.dataset.path !== recording.path) {
         dictationRecordingAudioEl.src = `/api/dictation/last-recording?t=${encodeURIComponent(String(recording.created_at || Date.now()))}`;
         dictationRecordingAudioEl.dataset.path = recording.path;
       }
+    }
+
+    function microphoneSummary(mic) {
+      const chosen = mic.selected_name || "System Default";
+      const live = mic.active_name || "";
+      if (live && live !== chosen && mic.native_helper_online) return `${chosen} → ${live}`;
+      return chosen;
     }
 
     function renderMicrophones(mic) {
@@ -4737,77 +5993,120 @@ INDEX_HTML = r"""<!doctype html>
         }
         microphoneEl.dataset.signature = signature;
       }
-      microphoneEl.value = mic.selected_id || "";
-      const selected = mic.selected_name || "System Default";
-      const permission = mic.authorization === "authorized" ? "mic allowed" : `mic ${mic.authorization || "unknown"}`;
-      const accessibility = mic.accessibility_trusted ? "paste allowed" : "allow Accessibility";
-      const helper = mic.native_helper_online ? "native helper online" : "native helper offline";
-      const lastEvent = mic.last_event ? ` / ${mic.last_event}` : "";
-      microphoneStatusEl.textContent = `${selected} / ${permission} / ${accessibility} / ${helper}${lastEvent}`;
+      if (document.activeElement !== microphoneEl) microphoneEl.value = mic.selected_id || "";
+      const preferred = mic.preferred_name && mic.preferred_name !== mic.selected_name ? ` · preferred: ${mic.preferred_name}` : "";
+      const live = mic.active_name && mic.native_helper_online ? ` · live: ${mic.active_name}` : "";
+      microphoneStatusEl.textContent = `${mic.selected_name || "System Default"}${preferred}${live}`;
     }
 
+    // ------------------------------------------------------------ signal map
+    function renderSignalMap(metrics, analysis) {
+      const styleMap = analysis.style_map || {};
+      const completion = styleMap.completion || {};
+      sttWordsEl.textContent = numberLabel(metrics.stt_words);
+      ttsWordsEl.textContent = numberLabel(metrics.tts_words);
+      analyzedItemsEl.textContent = numberLabel(analysis.items_analyzed);
+      openItemsEl.textContent = numberLabel(completion.open || 0);
+      runAnalysisBtn.disabled = !!analysis.running;
+      runAnalysisBtn.textContent = analysis.running ? "Analyzing..." : "Analyze";
+      const pending = Number(analysis.pending_items || 0);
+      const summary = String(analysis.latest_summary || "").trim();
+      analysisSummaryEl.textContent = summary || (Number(analysis.items_analyzed || 0) > 0 ? "Analysis is up to date." : "No analysis yet. Press Analyze to summarize the library.");
+      const backend = analysis.backend ? `${analysis.backend}${analysis.model ? ` · ${analysis.model}` : ""}` : "local rules";
+      const updated = analysis.updated_at ? whenLabel(analysis.updated_at) : "";
+      const details = [backend, `${numberLabel(pending)} pending`];
+      if (updated) details.push(`updated ${updated}`);
+      const lastError = String(analysis.last_error || "").trim();
+      if (lastError) {
+        details.push(/unavailable|urlopen|connect/i.test(lastError) ? "language model unreachable, using local rules" : `error: ${lastError.slice(0, 90)}`);
+      }
+      analysisDetailEl.textContent = details.join(" · ");
+      analysisDetailEl.title = lastError;
+      const topics = Array.isArray(styleMap.top_topics) ? styleMap.top_topics.slice(0, 10) : [];
+      const signature = JSON.stringify(topics);
+      if (topicMapEl.dataset.signature !== signature) {
+        topicMapEl.dataset.signature = signature;
+        topicMapEl.innerHTML = "";
+        if (topics.length === 0) {
+          const none = document.createElement("span");
+          none.className = "detail";
+          none.textContent = "No terms yet.";
+          topicMapEl.appendChild(none);
+        }
+        for (const topic of topics) {
+          const pill = document.createElement("span");
+          pill.className = "topic-pill";
+          pill.textContent = `${topic.term} ${topic.count}`;
+          pill.title = `"${topic.term}" appears in ${topic.count} analyzed ${topic.count === 1 ? "item" : "items"}`;
+          topicMapEl.appendChild(pill);
+        }
+      }
+    }
+
+    // ------------------------------------------------------------ panels
+    function setInspectorOpen(open, { persist = true, restoreFocus = false } = {}) {
+      state.inspectorOpen = !!open;
+      inspectorEl.hidden = !state.inspectorOpen;
+      inspectorToggleEl.setAttribute("aria-expanded", String(state.inspectorOpen));
+      if (persist) localStorage.setItem("docReader.inspector", state.inspectorOpen ? "open" : "closed");
+      updateScrim();
+      if (state.inspectorOpen && window.matchMedia("(max-width: 1180px)").matches) {
+        inspectorCloseEl.focus();
+      } else if (!state.inspectorOpen && restoreFocus) {
+        inspectorToggleEl.focus();
+      }
+    }
+
+    function setLibraryOpen(open, { restoreFocus = true } = {}) {
+      state.libraryOpen = !!open;
+      librarySidebarEl.classList.toggle("open", state.libraryOpen);
+      libraryToggleEl.setAttribute("aria-expanded", String(state.libraryOpen));
+      libraryToggleEl.setAttribute("aria-label", state.libraryOpen ? "Hide library" : "Show library");
+      updateScrim();
+      if (state.libraryOpen) {
+        librarySearchEl.focus();
+      } else if (restoreFocus && window.matchMedia("(max-width: 1023px)").matches) {
+        libraryToggleEl.focus();
+      }
+    }
+
+    function updateScrim() {
+      const narrowInspector = state.inspectorOpen && window.matchMedia("(max-width: 1180px)").matches;
+      const narrowLibrary = state.libraryOpen && window.matchMedia("(max-width: 1023px)").matches;
+      scrimEl.hidden = !(narrowInspector || narrowLibrary);
+    }
+
+    // ------------------------------------------------------------ actions
     async function refresh() {
       try {
         render(await api("/api/state"));
       } catch (error) {
-        errorEl.textContent = error.message;
+        errorEl.textContent = `Doc Reader web app is not responding: ${error.message}`;
       }
     }
 
-    document.getElementById("readText").addEventListener("click", async () => {
+    readTextBtn.addEventListener("click", async () => {
       try {
         errorEl.textContent = "";
-        render(await api("/api/text", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ label: "Text", text: textEl.value })
-        }));
+        const item = selectedItem();
+        if (!item) {
+          const text = textEl.value;
+          if (!text.trim()) {
+            errorEl.textContent = "Type or paste some text first.";
+            textEl.focus();
+            return;
+          }
+          render(await api("/api/text", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ label: "Text", text })
+          }));
+          return;
+        }
+        render(await api(`/api/items/${encodeURIComponent(item.id)}/play`, { method: "POST" }));
       } catch (error) {
         errorEl.textContent = error.message;
       }
-    });
-
-    fileEl.addEventListener("change", async () => {
-      const file = fileEl.files && fileEl.files[0];
-      if (!file) return;
-      const body = new FormData();
-      body.append("file", file);
-      try {
-        errorEl.textContent = "";
-        render(await api("/api/upload", { method: "POST", body }));
-      } catch (error) {
-        errorEl.textContent = error.message;
-      } finally {
-        fileEl.value = "";
-      }
-    });
-
-    audioFileEl.addEventListener("change", async () => {
-      const file = audioFileEl.files && audioFileEl.files[0];
-      if (!file) return;
-      const body = new FormData();
-      body.append("file", file);
-      try {
-        errorEl.textContent = "";
-        state.audioFileAction = `Transcribing ${file.name}`;
-        renderAudioFileStatus((state.data && state.data.stt) || {});
-        const payload = await api("/api/audio/transcribe", {
-          method: "POST",
-          headers: { "X-Doc-Reader-Timestamps": audioTimestampsEl.checked ? "1" : "0" },
-          body
-        });
-        render(payload.state || payload);
-      } catch (error) {
-        errorEl.textContent = error.message;
-      } finally {
-        state.audioFileAction = "";
-        audioFileEl.value = "";
-        renderAudioFileStatus((state.data && state.data.stt) || {});
-      }
-    });
-
-    audioTimestampsEl.addEventListener("change", () => {
-      localStorage.setItem("docReader.audioTimestamps", String(audioTimestampsEl.checked));
     });
 
     pauseBtn.addEventListener("click", async () => {
@@ -4830,17 +6129,127 @@ INDEX_HTML = r"""<!doctype html>
       }
     });
 
-    voiceEl.addEventListener("change", async () => {
+    newTextBtn.addEventListener("click", () => {
+      if (state.editing && !confirmDiscardEdit()) return;
+      state.selectedId = "";
+      localStorage.setItem("docReader.selectedId", "");
+      state.workspaceSignature = "";
+      renderLibrary(currentItems());
+      renderWorkspace(currentItems());
+      renderPlayback(state.data || {}, currentItems());
+      textEl.focus();
+    });
+
+    let draftTimer = null;
+    textEl.addEventListener("input", () => {
+      if (draftTimer) window.clearTimeout(draftTimer);
+      draftTimer = window.setTimeout(() => {
+        localStorage.setItem("docReader.draft", textEl.value);
+        if (!state.selectedId) showDraftWorkspace();
+      }, 300);
+    });
+
+    fileEl.addEventListener("change", async () => {
+      const file = fileEl.files && fileEl.files[0];
+      if (!file) return;
+      const body = new FormData();
+      body.append("file", file);
       try {
         errorEl.textContent = "";
-        render(await api("/api/settings", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ speech_backend: voiceEl.value })
-        }));
+        state.importAction = `Importing ${file.name}...`;
+        fileLabelEl.classList.add("busy");
+        renderAudioFileStatus((state.data && state.data.stt) || {});
+        const payload = await api("/api/upload", { method: "POST", body });
+        state.importAction = "";
+        render(payload);
+        if (payload.active_id) selectItem(payload.active_id);
       } catch (error) {
-        errorEl.textContent = error.message;
+        state.importAction = "";
+        errorEl.textContent = `Could not import ${file.name}: ${error.message}`;
+      } finally {
+        fileEl.value = "";
+        fileLabelEl.classList.remove("busy");
+        renderAudioFileStatus((state.data && state.data.stt) || {});
       }
+    });
+
+    audioFileEl.addEventListener("change", async () => {
+      const file = audioFileEl.files && audioFileEl.files[0];
+      if (!file) return;
+      const body = new FormData();
+      body.append("file", file);
+      try {
+        errorEl.textContent = "";
+        state.audioFileAction = `Transcribing ${file.name}...`;
+        renderAudioFileStatus((state.data && state.data.stt) || {});
+        const payload = await api("/api/audio/transcribe", {
+          method: "POST",
+          headers: { "X-Doc-Reader-Timestamps": audioTimestampsEl.checked ? "1" : "0" },
+          body
+        });
+        state.audioFileAction = "";
+        render(payload.state || payload);
+        if (payload.item && payload.item.id) selectItem(payload.item.id);
+      } catch (error) {
+        state.audioFileAction = "";
+        errorEl.textContent = `Could not transcribe ${file.name}: ${error.message}`;
+      } finally {
+        audioFileEl.value = "";
+        renderAudioFileStatus((state.data && state.data.stt) || {});
+      }
+    });
+
+    audioTimestampsEl.addEventListener("change", () => {
+      localStorage.setItem("docReader.audioTimestamps", String(audioTimestampsEl.checked));
+    });
+
+    copyItemBtn.addEventListener("click", async () => {
+      const item = selectedItem();
+      if (!item) return;
+      try {
+        errorEl.textContent = "";
+        const text = await loadItemText(item);
+        await navigator.clipboard.writeText(text || "");
+        showCopied(copyItemBtn);
+      } catch (error) {
+        errorEl.textContent = `Could not copy: ${error.message}`;
+      }
+    });
+
+    editItemBtn.addEventListener("click", enterEditMode);
+    saveItemBtn.addEventListener("click", saveEdit);
+    cancelEditBtn.addEventListener("click", () => {
+      exitEditMode();
+      editItemBtn.focus();
+    });
+    itemEditorEl.addEventListener("input", () => {
+      state.editingText = itemEditorEl.value;
+    });
+    itemEditorEl.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        saveEdit();
+      }
+    });
+
+    voiceButtonEl.addEventListener("click", () => setVoiceMenuOpen(!voiceUi.open));
+    voiceOriginalToggleEl.addEventListener("click", () => {
+      const expanded = voiceOriginalToggleEl.getAttribute("aria-expanded") === "true";
+      voiceOriginalToggleEl.setAttribute("aria-expanded", String(!expanded));
+      voiceOriginalListEl.hidden = expanded;
+      if (!expanded) voiceOriginalListEl.scrollIntoView({ block: "nearest" });
+    });
+    voiceMenuEl.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const options = Array.from(voiceMenuEl.querySelectorAll(".voice-option")).filter((el) => !el.closest("[hidden]"));
+      const index = options.indexOf(document.activeElement.closest(".voice-option"));
+      const next = options[Math.max(0, Math.min(options.length - 1, (index < 0 ? 0 : index) + (event.key === "ArrowDown" ? 1 : -1)))];
+      if (next) { event.preventDefault(); next.focus(); }
+    });
+    document.addEventListener("pointerdown", (event) => {
+      if (!voiceUi.open) return;
+      if (voiceMenuEl.contains(event.target) || voiceButtonEl.contains(event.target)) return;
+      setVoiceMenuOpen(false);
     });
 
     let readRateSaveTimer = null;
@@ -4861,15 +6270,11 @@ INDEX_HTML = r"""<!doctype html>
         errorEl.textContent = error.message;
       }
     }
-
     readRateEl.addEventListener("input", () => {
       renderReadRate({ read_rate: readRateEl.value });
-      if (readRateSaveTimer) {
-        window.clearTimeout(readRateSaveTimer);
-      }
+      if (readRateSaveTimer) window.clearTimeout(readRateSaveTimer);
       readRateSaveTimer = window.setTimeout(saveReadRate, 350);
     });
-
     readRateEl.addEventListener("change", saveReadRate);
 
     dictationEnabledEl.addEventListener("change", async () => {
@@ -4901,9 +6306,7 @@ INDEX_HTML = r"""<!doctype html>
     nativeHelperToggleEl.addEventListener("click", async () => {
       try {
         errorEl.textContent = "";
-        const mic = state.data && state.data.stt && state.data.stt.microphone
-          ? state.data.stt.microphone
-          : {};
+        const mic = state.data && state.data.stt && state.data.stt.microphone ? state.data.stt.microphone : {};
         const online = !!mic.native_helper_online;
         state.nativeHelperAction = online ? "stopping helper" : "starting helper";
         renderNativeHelperToggle(mic);
@@ -4913,18 +6316,14 @@ INDEX_HTML = r"""<!doctype html>
         errorEl.textContent = error.message;
       } finally {
         state.nativeHelperAction = "";
-        if (state.data && state.data.stt) {
-          renderDictation(state.data.stt);
-        }
+        if (state.data && state.data.stt) renderDictation(state.data.stt);
       }
     });
 
     nativeHelperResetEl.addEventListener("click", async () => {
       try {
         errorEl.textContent = "";
-        const mic = state.data && state.data.stt && state.data.stt.microphone
-          ? state.data.stt.microphone
-          : {};
+        const mic = state.data && state.data.stt && state.data.stt.microphone ? state.data.stt.microphone : {};
         state.nativeHelperAction = "resetting helper";
         renderNativeHelperToggle(mic);
         await api("/api/native/reset", { method: "POST" });
@@ -4933,9 +6332,7 @@ INDEX_HTML = r"""<!doctype html>
         errorEl.textContent = error.message;
       } finally {
         state.nativeHelperAction = "";
-        if (state.data && state.data.stt) {
-          renderDictation(state.data.stt);
-        }
+        if (state.data && state.data.stt) renderDictation(state.data.stt);
       }
     });
 
@@ -4952,6 +6349,11 @@ INDEX_HTML = r"""<!doctype html>
       }
     });
 
+    function setActiveView(view) {
+      state.activeView = ["readings", "dictations", "clawdad"].includes(view) ? view : "all";
+      localStorage.setItem("docReader.historyView", state.activeView);
+      renderLibrary(currentItems());
+    }
     showAllBtn.addEventListener("click", () => setActiveView("all"));
     showReadingsBtn.addEventListener("click", () => setActiveView("readings"));
     showDictationsBtn.addEventListener("click", () => setActiveView("dictations"));
@@ -4959,45 +6361,51 @@ INDEX_HTML = r"""<!doctype html>
     librarySearchEl.addEventListener("input", () => {
       state.libraryQuery = librarySearchEl.value;
       localStorage.setItem("docReader.libraryQuery", state.libraryQuery);
-      renderLibrary((state.data && (state.data.library || state.data.items)) || []);
+      renderLibrary(currentItems());
     });
 
-    libraryEl.addEventListener("pointerdown", (event) => {
-      if (event.target && event.target.closest && event.target.closest("button, input, textarea, select, a")) {
-        return;
-      }
-      state.libraryPointerSelecting = true;
+    libraryEl.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown") { event.preventDefault(); moveRowFocus(1); }
+      else if (event.key === "ArrowUp") { event.preventDefault(); moveRowFocus(-1); }
+      else if (event.key === "Home") { event.preventDefault(); moveRowFocus(-1000); }
+      else if (event.key === "End") { event.preventDefault(); moveRowFocus(1000); }
     });
 
-    document.addEventListener("pointerup", () => {
-      if (!state.libraryPointerSelecting) return;
-      window.setTimeout(() => {
-        state.libraryPointerSelecting = false;
-        queueDeferredLibraryFlush();
-      }, 80);
+    libraryToggleEl.addEventListener("click", () => setLibraryOpen(!state.libraryOpen));
+    inspectorToggleEl.addEventListener("click", () => setInspectorOpen(!state.inspectorOpen));
+    inspectorCloseEl.addEventListener("click", () => setInspectorOpen(false, { restoreFocus: true }));
+    dictationChipEl.addEventListener("click", () => setInspectorOpen(true));
+    scrimEl.addEventListener("click", () => {
+      if (state.libraryOpen) setLibraryOpen(false);
+      if (state.inspectorOpen && window.matchMedia("(max-width: 1180px)").matches) setInspectorOpen(false, { restoreFocus: true });
     });
-
-    document.addEventListener("pointercancel", () => {
-      state.libraryPointerSelecting = false;
-      queueDeferredLibraryFlush();
-    });
-
-    document.addEventListener("selectionchange", () => {
-      if (!state.libraryRenderDeferred) return;
-      queueDeferredLibraryFlush();
-    });
+    window.addEventListener("resize", updateScrim);
 
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        if (state.editingItemId) {
-          event.preventDefault();
-          cancelDictationEdit();
-          return;
-        }
-        if (document.activeElement && document.activeElement.blur) {
-          document.activeElement.blur();
-        }
+      if (event.key !== "Escape") return;
+      if (hotkeyUi.recording) return; // the recorder handles its own Escape
+      if (voiceUi.open) {
+        event.preventDefault();
+        setVoiceMenuOpen(false, { restoreFocus: true });
+        return;
       }
+      if (state.editing) {
+        event.preventDefault();
+        exitEditMode();
+        editItemBtn.focus();
+        return;
+      }
+      if (state.libraryOpen && window.matchMedia("(max-width: 1023px)").matches) {
+        event.preventDefault();
+        setLibraryOpen(false);
+        return;
+      }
+      if (state.inspectorOpen && window.matchMedia("(max-width: 1180px)").matches) {
+        event.preventDefault();
+        setInspectorOpen(false, { restoreFocus: true });
+        return;
+      }
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     });
 
     refresh();
