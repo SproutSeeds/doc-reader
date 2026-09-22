@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -59,6 +60,34 @@ class ProcessOwnershipTests(unittest.TestCase):
         finally:
             process.terminate()
             process.wait(timeout=5)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows process inventory")
+    def test_spawned_service_is_identified_and_stopped(self):
+        with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {
+            "DOC_READER_MANAGED_ROOT": root,
+            "DOC_READER_ANALYSIS_ENABLED": "0",
+        }):
+            process = subprocess.Popen([
+                sys.executable, "-X", windows_app._root_marker(),
+                "-m", "doc_reader.webapp", "--host", "127.0.0.1", "--port", "0",
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                deadline = time.monotonic() + 10
+                found = []
+                while time.monotonic() < deadline:
+                    found = windows_app._find_stray_pids("doc_reader.webapp")
+                    if process.pid in found:
+                        break
+                    time.sleep(0.1)
+                self.assertIn(process.pid, found)
+                windows_app._write_pid("web", process.pid)
+                windows_app.stop_service("web", quiet=True)
+                process.wait(timeout=5)
+                self.assertIsNotNone(process.returncode)
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    process.wait(timeout=5)
 
     def test_open_repairs_the_whole_stack(self):
         with patch.object(windows_app, "cmd_start", return_value=0) as start, \

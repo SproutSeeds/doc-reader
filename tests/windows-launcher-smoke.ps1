@@ -25,8 +25,16 @@ if (-not (Test-Path $python)) { throw "Bootstrap did not create the venv" }
 if ($LASTEXITCODE -ne 0) { throw "CLI help failed: $LASTEXITCODE" }
 
 # Bare cli must pass no synthetic 'cli' filename through the PowerShell slice.
-$output = & (Join-Path $repo "run-doc-reader.ps1") cli 2>&1 | Out-String
-if ($LASTEXITCODE -ne 2 -or $output -notmatch "required") {
+$info = New-Object System.Diagnostics.ProcessStartInfo
+$info.FileName = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+$info.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $repo "run-doc-reader.ps1") + '" cli'
+$info.UseShellExecute = $false
+$info.RedirectStandardOutput = $true
+$info.RedirectStandardError = $true
+$process = [System.Diagnostics.Process]::Start($info)
+$output = $process.StandardOutput.ReadToEnd() + $process.StandardError.ReadToEnd()
+$process.WaitForExit()
+if ($process.ExitCode -ne 2 -or $output -notmatch "required") {
     throw "Bare CLI did not report its missing input: $output"
 }
 Write-Host "Windows launcher smoke checks passed"

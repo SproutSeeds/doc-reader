@@ -4339,11 +4339,13 @@ INDEX_HTML = r"""<!doctype html>
     @starting-style {
       .voice-menu { opacity: 0; transform: scale(0.97) translateY(4px); }
     }
-    .voice-menu-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 6px 8px 8px; }
+    .voice-menu-head { position: sticky; top: -8px; z-index: 2; background: var(--surface); display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 8px 8px; }
     .voice-menu-head h3 { margin: 0; font-size: 13px; font-weight: 600; }
     .voice-groups { display: grid; gap: 6px; }
     .voice-group-title { color: var(--muted); font-size: 12px; font-weight: 500; padding: 8px 8px 2px; }
     .voice-list { display: grid; gap: 1px; }
+    .voice-choice { display: flex; align-items: center; gap: 4px; }
+    .voice-choice > .voice-option { min-width: 0; flex: 1; }
     .voice-option {
       display: grid;
       grid-template-columns: 18px minmax(0, 1fr) auto;
@@ -4644,7 +4646,7 @@ INDEX_HTML = r"""<!doctype html>
               <div id="voiceMenu" class="voice-menu" role="dialog" aria-label="Choose a voice" hidden>
                 <div class="voice-menu-head">
                   <h3>Kokoro voices</h3>
-                  <span class="detail">English, runs on this PC</span>
+                  <button id="voiceClose" type="button" aria-label="Close voice picker">Close</button>
                 </div>
                 <div id="voiceGroups" class="voice-groups"></div>
                 <div class="voice-original">
@@ -5494,9 +5496,12 @@ INDEX_HTML = r"""<!doctype html>
         event.stopPropagation();
         toggleVoicePreview(voice, preview);
       });
-      row.append(text, preview);
+      row.append(text);
       row.addEventListener("click", () => chooseVoice(voice.id));
-      return row;
+      const choice = document.createElement("div");
+      choice.className = "voice-choice";
+      choice.append(row, preview);
+      return choice;
     }
 
     function playIcon() {
@@ -6233,6 +6238,7 @@ INDEX_HTML = r"""<!doctype html>
     });
 
     voiceButtonEl.addEventListener("click", () => setVoiceMenuOpen(!voiceUi.open));
+    $("voiceClose").addEventListener("click", () => setVoiceMenuOpen(false, { restoreFocus: true }));
     voiceOriginalToggleEl.addEventListener("click", () => {
       const expanded = voiceOriginalToggleEl.getAttribute("aria-expanded") === "true";
       voiceOriginalToggleEl.setAttribute("aria-expanded", String(!expanded));
