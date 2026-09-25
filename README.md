@@ -1,18 +1,22 @@
-# read-docs
+# Doc Reader
+
+Doc Reader reads documents and selected text aloud, turns speech into text,
+and keeps the results in a local Library. It includes a macOS menu-bar app,
+a Windows tray helper, and a shared web workspace.
+
+Windows support, the reading workspace, and configurable hotkeys were contributed
+by [Aaron Tate](https://github.com/AaronTateDev) in his
+[Windows branch](https://github.com/AaronTateDev/doc-reader-fork/tree/windows-support).
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/SproutSeeds/doc-reader/main/docs/readme-animation.svg" alt="Animated Doc Reader workflow showing local-first speech, dictation, the Library, and the Signal Map" width="760">
+  <img src="https://raw.githubusercontent.com/SproutSeeds/doc-reader/main/docs/readme-animation.svg" alt="Doc Reader: document reading, dictation, Library, and Signal Map" width="760">
 </p>
 
+Kokoro and Whisper run locally by default. Optional remote speech and analysis
+services use the endpoints you configure. The web workspace includes a document
+editor, 28 English Kokoro voices with samples, playback controls, and hotkey settings.
+
 Maintained by SproutSeeds. Research stewardship: Fractal Research Group ([frg.earth](https://frg.earth)).
-
-A macOS-first, local-first speech workspace for reading documents, capturing
-dictation, and keeping the resulting material organized in one local Library.
-
-It streams `.pdf`, `.docx`, `.txt`, and `.md` files through local neural TTS,
-reads highlighted text with Right Command or Command-L, captures Option-key
-dictation and uploaded audio through local speech-to-text, and keeps playback
-continuous by preparing later chunks in the background.
 
 ## Why this exists
 
@@ -31,12 +35,112 @@ continuous by preparing later chunks in the background.
 
 ## Platform support
 
-The app experience is macOS-first. The menu-bar app, login agent, global selection
-hotkey, and right-click Services integration are macOS features.
+- **macOS**: menu-bar app, login agent, Right Command / Command-L selection
+  hotkey, Option hold-to-dictate, and the right-click Services item.
+- **Windows 10/11**: system-tray helper, Ctrl+Alt+R selection hotkey, Right Ctrl
+  hold-to-dictate, login startup shortcut, and the same local web app. Kokoro and
+  Whisper run on an NVIDIA GPU through CUDA when one is present, otherwise on CPU.
+- **Linux**: the document CLI works with the same Python engine; the tray helper
+  and service orchestration are not packaged.
 
-The document reader engine is still a Python CLI and may work on Linux or Windows
-with compatible speech dependencies, but the packaged app workflow is supported on
-macOS.
+## Quick start: Windows
+
+Windows support is available from this source checkout. The published npm 0.4.1
+package predates this contribution; these commands will ship in a later release.
+Aaron tested his original implementation on Windows 11 with an RTX 3080.
+Automated checks cover platform logic and macOS compilation; physical microphone,
+keyboard, clipboard insertion, and sleep/wake checks remain part of release testing.
+
+Everything runs locally on your PC: the Kokoro speech service, Whisper
+speech-to-text, the web app, and a tray helper for hotkeys and dictation.
+
+Prerequisites (one time):
+
+```powershell
+winget install astral-sh.uv          # creates the Python 3.12 environment
+winget install Gyan.FFmpeg           # audio playback (ffplay) and dictation audio cleanup
+winget install eSpeak-NG.eSpeak-NG   # optional: Kokoro bundles its own espeak-ng
+```
+
+Clone this repository, then from the checkout folder:
+
+```powershell
+git clone https://github.com/SproutSeeds/doc-reader.git
+cd doc-reader
+.\run-doc-reader.cmd
+```
+
+The first run builds `.venv` (PyTorch with CUDA 12.4 when an NVIDIA GPU is
+detected, otherwise the CPU build), installs Kokoro, faster-whisper, PySide6,
+pynput, and sounddevice, starts the three background processes, and opens
+`http://127.0.0.1:8766`. The first Kokoro and Whisper model downloads take a
+minute or two; the web page shows `local-kokoro online` once speech is ready.
+
+Useful commands:
+
+```powershell
+.\run-doc-reader.cmd status          # service health, GPU in use, helper state
+.\run-doc-reader.cmd stop
+.\run-doc-reader.cmd restart
+.\run-doc-reader.cmd doctor          # Python, CUDA, Kokoro, ffmpeg, espeak, microphone checks
+.\run-doc-reader.cmd enable-startup  # launch at login
+.\run-doc-reader.cmd disable-startup
+.\run-doc-reader.cmd install-shortcuts  # clickable "Doc Reader" on the Desktop and in the Start menu
+.\run-doc-reader.cmd remove-shortcuts
+.\run-doc-reader.cmd cli .\paper.pdf --mode smart   # command-line reader
+```
+
+To use the npm command from this checkout, run `npm install -g .`.
+Then use `read-docs start`, `read-docs stop`, `read-docs status`,
+`read-docs doctor`, and `read-docs enable-startup`.
+
+What the tray helper gives you on Windows:
+
+- **Read highlighted text**: select text in any app and press `Ctrl+Alt+R`. The
+  helper copies the selection (restoring your clipboard afterwards), sends it to
+  the web app, and playback starts through Local Kokoro.
+- **Dictation**: put the cursor in a text field and hold `Right Ctrl`. A small
+  HUD shows while recording; release the key and the audio goes to local Whisper,
+  the text is pasted at the cursor, and a `Dictation` card lands in the Library.
+- **Tray menu**: Open Doc Reader, Read Selection, Read Clipboard, Pause/Resume,
+  Stop, toggle dictation, Quit.
+
+Change the keys from the web page: open **Details**, and under **Dictation**
+click the key shown next to "Dictation key" or "Read selection", then press
+the key you want. Preset chips below each field give a one-click swap. The
+running helper switches within a couple of seconds, no restart needed, and
+the choice is saved on disk with the other web settings, so it survives
+restarts and reboots.
+
+Rules, enforced by the page and the server with a plain-language reason:
+
+- Dictation is one key you hold: Ctrl, Alt, or Shift on their own (either
+  side), F1 to F24, Scroll Lock, Pause, Insert, Caps Lock, or a side mouse
+  button (Mouse 4 / Mouse 5). Letters, numbers, Space, Enter, Tab, the
+  Windows/Command key, and left, right, or middle click are refused.
+- Read selection is a chord: at least one of Ctrl, Alt, Shift plus one
+  letter, number, function key, or Space. The Windows/Command key is refused.
+
+On macOS, supported dictation keys include modifiers, F1 to F20, navigation keys,
+and side mouse buttons. The built-in read-selection shortcut is available as a preset.
+The same page shows Control and Option instead of Ctrl and Alt, and
+the Mac helper applies the saved keys on its next status check (built-in
+fallback: hold Option, Control+Option+Command+R).
+
+Environment variables still work as the fallback default when nothing has been
+picked in the page:
+
+```powershell
+$env:DOC_READER_SELECTION_SHORTCUT = "<ctrl>+<shift>+r"
+$env:DOC_READER_DICTATION_KEY = "f8"        # any pynput key name: ctrl_r, alt_r, scroll_lock, f9...
+$env:DOC_READER_STT_MODEL = "medium"        # Whisper size: tiny, base, small (default), medium, large-v3
+.\run-doc-reader.cmd restart
+```
+
+Data, logs, and PID files live in `%USERPROFILE%\.doc-reader-managed`
+(`logs\tts.log`, `logs\web.log`, `logs\helper.log`). The web app listens on
+`127.0.0.1:8766` and the speech service on `127.0.0.1:8772`; both are loopback
+only.
 
 ## Quick start: macOS app
 
@@ -123,6 +227,13 @@ The selectable private backends are:
 Mac Kokoro -> Remote Kokoro -> Remote Chatterbox -> macOS say
 ```
 
+The web page's Voice menu lists the 28 English Kokoro voices (American and
+British, female and male) with a play button that speaks a short sample of
+each. The chosen voice is saved with the other web settings and used for
+playback and prepared Library audio. The original engine choices (local
+fallback, remote Kokoro, Chatterbox, OpenAI) sit under "Original engine
+options" at the bottom of the same menu.
+
 Doc Reader cleans Markdown/code-heavy text and splits long passages before they
 reach the neural TTS sidecars. Chatterbox is still available as a selectable
 voice, but the default app path favors Kokoro for steadier document playback.
@@ -203,8 +314,8 @@ check mute or select a microphone. Your selected input stays selected, and
 If Option does nothing, check the **Speech-to-text on/off** message on the page.
 Enable Speech-to-text, confirm the helper is online, and check microphone and
 Input Monitoring permission. Starting the helper alone does not enable dictation.
-The page displays up to 100 library cards at a time; **Show more** reveals older
-cards, and search checks the full transcript of every card.
+The library initially shows 100 items; **Show more** reveals older items. Search
+matches titles, snippets, and the full text of Dictation cards.
 
 When a Logitech headset or mic is attached, Doc Reader pins it as the preferred
 dictation input instead of drifting back to macOS System Default during device

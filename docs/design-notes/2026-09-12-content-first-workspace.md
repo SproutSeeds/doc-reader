@@ -1,0 +1,255 @@
+# Doc Reader web app: content-first workspace redesign
+
+Date: 2026-09-12. Scope: the local web page served by `doc_reader/webapp.py`
+(`INDEX_HTML`: vanilla HTML, CSS custom properties, and plain DOM JavaScript).
+No framework, no build step, no new dependencies. Storage and API contracts are
+unchanged.
+
+## Current problems
+
+- The text editor is confined to a 300px column; the Library gets the wide column.
+- Import controls, voice settings, dictation diagnostics, and the text field all
+  compete at the same visual weight in one stack.
+- The Signal map sits above the Library as a large card even though it is
+  consulted occasionally.
+- Library cards repeat the beginning of the text in the title and again in the
+  preview ("Dictation: adding any kind of..." then "adding any kind of...").
+- Selection, live playback state, and the primary action are not clearly
+  distinguished from navigation and status text.
+- Status is written as long slash-separated sentences in three places.
+
+## Chosen layout
+
+```
++-----------------------------------------------------------------------------+
+| Doc Reader   [Import document] [Import audio] [x] Timestamps  [New text]   |
+|                                              (dot) Reading ...   [Details] |
++-------------+------------------------------------------------+-------------+
+| Library     | Workspace                                       | Inspector   |
+| All/Read/   |  Kind - Title - meta            [Copy] [Edit]   | (toggle)    |
+| Dict/Clawdad|  +------------------------------------------+   | Dictation   |
+| [search]    |  |  editor / reading text (18px, <=72ch)    |   | Signal map  |
+| row         |  |                                          |   | Engines     |
+| row (sel)   |  +------------------------------------------+   |             |
+| row (live)  |  [Read text] [Pause] [Stop]  state  Voice Speed |             |
++-------------+------------------------------------------------+-------------+
+```
+
+- Library 280px on desktop; the workspace takes the rest. Rows are buttons
+  that select an item and show its text in the workspace without starting
+  playback. The playing/paused item carries a rail; the selected row a fill.
+- Workspace footer keeps Read/Play, Pause/Resume, Stop, current state, voice,
+  and speed visible while long text scrolls inside the surface.
+- Inspector (right, toggled by "Details", remembered per browser) holds
+  dictation controls and readiness, the Signal map, and engine status. Below
+  1180px it overlays as a drawer; below 1024px the Library also becomes a
+  drawer with a header toggle, Escape to close, and focus return.
+- Draft text persists in `localStorage` and survives selecting items; "New
+  text" returns to it. Saving edits keeps the existing `POST /api/items/{id}/text`
+  semantics (no silent overwrite of another item).
+
+## Token direction
+
+Dark (default in dark mode): bg `#15171B`, structural `#1C1F25`, editor
+`#242830`, text `#F3F4F6`, secondary `#B0B8C4`, accent `#62D0BC`, primary
+button text `#10251F`, live/recording `#F0B45C`, error `#F28B82`. Light mode
+mirrors it with `#F1F3F5` / `#E8EBEE` / `#FFFFFF`, accent `#137D6B`.
+Contrast was measured (see verification): body and secondary text >= 4.5:1,
+accent and strong borders >= 3:1 on their surfaces. System font stack;
+interface text 14px, reading text 18px/1.6 constrained to 72ch.
+
+## Feature mapping
+
+| Capability | Where it lives now |
+| --- | --- |
+| Paste/type text and read it | Workspace editor + footer "Read text" (`POST /api/text`) |
+| Import document / audio, timestamps | Header actions (`/api/upload`, `/api/audio/transcribe`) |
+| Play / Pause / Resume / Stop | Footer (`/api/items/{id}/play`, `/api/pause`, `/api/stop`) |
+| Voice, read speed | Footer (`/api/settings`) |
+| Library filters, search, counts | Library sidebar (client-side, same rules) |
+| Copy / edit saved text | Workspace header (`GET/POST /api/items/{id}/text`) |
+| Dictation toggle, helper start/stop/reset, microphone | Inspector > Dictation (`/api/settings`, `/api/native/*`) |
+| Recording / transcribing / helper state | Footer dictation chip + Inspector readiness rows |
+| Signal map, Analyze, terms | Inspector > Signal map (`/api/library/analysis/run`) |
+| Local/remote speech availability | Inspector > Engines |
+
+Semantics preserved: "STT words" = words in dictation items, "TTS words" =
+words in reading items, "Analyzed" = items with an analysis entry, "Open" =
+readings not yet completed (`style_map.completion.open`). "Clawdad" = items
+handed off from the external Clawdad app (`source == "clawdad"`). Read speed is
+shown as WPM and the engine's own multiplier (`rate / 180`).
+
+## Risks
+
+- PDF/DOCX items have no text endpoint; the workspace shows metadata and a
+  notice instead of content. Playback still reads the document.
+- The page re-renders from `/api/state` every 1.5 s; the workspace editor and
+  selection must not be rebuilt on each poll (only the Library list is).
+- Hotkey capture and paste cannot be exercised from the browser; verified via
+  the transcription API and helper heartbeat only.
+
+## Verification (2026-09-12, Windows, isolated preview on :8790 with a copy of the library)
+
+Executed through the running page (Chromium automation) unless noted:
+
+- Paste text, read it, pause, resume, stop; live row tag, footer state, and
+  button labels follow `running`/`paused`/`active_id`.
+- Select items; PDF/DOCX fall back to a notice (source inspection: no text
+  endpoint for those types).
+- Draft text survives selecting items and "New text", and survives reload.
+- Filters (All / Readings / Dictations / Clawdad) with counts, search, empty
+  states; selection, view, and inspector state persist across reload.
+- Edit, save, revert, on a dictation; copy verified by source only (the
+  Clipboard API refuses writes from an unfocused automation window).
+- Import a `.txt` through the real file input (plays, line breaks kept);
+  import a silent `.wav` through the real audio input ("Audio produced no
+  text"); multipart audio transcription with timestamps via the API.
+- Analyze: queued and completed with local rules; the upstream worker first
+  waits on the unreachable remote model, unchanged behavior.
+- Speech services unreachable (second preview on :8791): chip and engine rows
+  show offline, playback reports a readable failure instead of a traceback.
+- Viewports 1440x900, 1366x768, 1024x768, 390x844 (dark and light at 1440);
+  150% zoom without horizontal overflow; library and Details drawers at phone
+  width with Escape and focus return; visible focus ring; arrow keys move
+  through the list.
+- Contrast measured: text >= 4.5:1, accent and strong borders >= 3:1, both
+  themes.
+- `python -m unittest discover -s tests`: 21 tests pass.
+
+Not verified here: real keyboard Enter/Space activation of list rows (the
+automation harness cannot deliver activating key events, plain buttons
+included); the hold-to-dictate hotkey and paste-into-app path (native helper,
+outside the browser); document import of PDF/DOCX with real files.
+
+## Addendum (2026-09-12): Kokoro voice picker
+
+The footer Voice control was a native `<select>` that only chose the speech
+engine; every Kokoro engine read with `af_heart`. It is now a trigger button
+("Emma", or "Emma (Remote Kokoro)" when the engine is not the local one) that
+opens a popover anchored above it (bottom-left origin, 150 ms ease-out,
+`role="dialog"`):
+
+- "American voices" and "British voices" listboxes: the 28 English Kokoro
+  voices from `doc_reader/kokoro_voices.py`, female then male, each with a
+  checkmark when current and a round play button that fetches
+  `GET /api/voices/preview?voice=<id>` (one short sentence, synthesized once
+  per voice per process, served as `audio/wav`).
+- "Original engine options": a disclosure pinned to the bottom of the
+  scrolling panel that expands the previous engine list (Local fallback,
+  Local Kokoro, Remote Kokoro, strict, Chatterbox, OpenAI API). The current
+  engine's label shows on the collapsed row.
+- Choosing a voice posts `{kokoro_voice, speech_backend}`; if the current
+  engine cannot use Kokoro voices, the engine switches to Local Kokoro.
+  Choosing an engine posts `{speech_backend}` only, as before.
+- Keyboard: focus lands on the current option; ArrowUp/ArrowDown move within
+  visible options; Escape closes and returns focus to the trigger; a pointer
+  press outside closes. Below 720 px the panel becomes a bottom sheet.
+
+Backend: `kokoro_voice` is a validated web setting (catalog ids only);
+`play()` appends `--http-tts-voice` for Kokoro-capable engines; prepared
+Library audio uses the same voice; `tts` state carries `kokoro_voice`,
+`kokoro_voice_label`, `kokoro_backends`, and `voices`.
+
+Verified on the :8790 preview: picker opens/closes, sample playback for Bella,
+choosing Emma persisted and the reader subprocess launched with
+`--http-tts-voice bf_emma`, engine section expand/collapse, Escape and outside
+click, arrow keys, 390x844 sheet, light theme, unknown voice ids rejected
+(400). `python -m unittest discover -s tests`: 26 tests pass.
+
+## Addendum (2026-09-12): hotkey quick swap and custom keys
+
+Details > Dictation now has two hotkey rows. Each shows the current key as
+key caps in a field; clicking the field records the next press (or side
+mouse button) and saves it, or explains why it was refused. Preset chips under
+each field give one-click swaps. The stored form is platform-neutral
+(`doc_reader/platform_tools.py`: `validate_dictation_key`,
+`validate_selection_shortcut`), saved in the web settings file, and exposed
+in `stt.hotkeys` of `/api/native/status`.
+
+- Windows helper: rebinds on its next heartbeat; a `pynput` mouse listener
+  handles Mouse 4 / Mouse 5 as the hold-to-talk key.
+- macOS helper (`macos/DocReaderApp/.../main.swift`): reads `stt.hotkeys`
+  from its existing status poll. Modifier keys reuse the Option gesture
+  logic with the configured flag; plain keys (F-keys, Insert, Home, End,
+  Page Up/Down) and side mouse buttons use a simple down/up path; a custom
+  read-selection chord replaces the legacy gestures only while a custom
+  chord is saved. Anything unparseable keeps the built-in keys.
+
+### Verified on Windows
+
+Recorder flows through the running page (synthetic key and mouse events):
+Right Alt recorded on release, F8 recorded on press, letter refused with the
+"key you don't type with" message, Windows key refused, left click cancels,
+Mouse 4 recorded; chord Ctrl+Shift+R recorded, bare letter refused with "Add
+Ctrl, Alt, or Shift". Live app: helper log shows the rebinding within a
+heartbeat for F8 / Ctrl+Shift+R and for Mouse 5. Tests: 36 pass.
+
+### Not verified: macOS (for Cody)
+
+The Swift change was written on Windows and has not been compiled or run. To
+check it on a Mac:
+
+1. Build with `./build-macos-app` and start the stack as usual.
+2. In the web page, Details > Dictation: the fields should read Option and
+   Control+Option+Command+R. Hold Option: dictation works as before.
+3. Click the Dictation key field, press Right Shift. The helper log
+   (`Console` or the app's dictation log) should say
+   `dictation key now Right Shift`; holding Right Shift records, the
+   overlay says "tap Right Shift to stop".
+4. Click F8 via the chip. Hold F8: records; release: transcribes.
+5. If the mouse has side buttons, record Mouse 4 and hold it.
+6. Click the Read selection field, press Control+Shift+R; select text in any
+   app and press it: the selection is read. Control+Option+Command+R should
+   no longer trigger while the custom chord is set.
+7. Switch back to Option and Control+Option+Command+R with the chips: the
+   log says `read-selection shortcut: built-in`, and the older gestures
+   (right Command tap, Command+L) work again.
+8. Failure mode: set a bad value with
+   `curl -X POST -H 'Content-Type: application/json' -d '{"dictation_key":"a"}' http://127.0.0.1:8766/api/settings`
+   returns 400 with a reason and nothing changes.
+
+## Addendum (2026-09-12): dictation after sleep
+
+Symptom: after the PC slept (or the session was locked), every dictation
+transcribed to nothing until the whole stack was restarted. The web log shows
+the cause: the helper posted 44-byte WAV files (a header, no samples) for
+holds of 0.5 to 2 s. The pre-armed PortAudio input stream survives sleep as an
+object but stops delivering callbacks.
+
+Fix in `Recorder` (`doc_reader/windows_helper.py`): every callback stamps
+`last_data_at`; a stream quiet for more than 1.5 s counts as stale, and both
+the heartbeat `arm()` (every 2 s) and `start()` reopen it (closing the old
+stream and re-initialising PortAudio so renumbered devices are picked up). A
+capture that comes back empty for a real hold marks the stream stale, reopens
+it, and tells the user "No audio from the microphone. Try again." instead of
+sending an empty file. A native event filter also catches Windows resume
+(`WM_POWERBROADCAST`) so the stream is reopened right after wake.
+
+Verified: unit tests with a fake stream (5), real-microphone script (arm,
+reopen, capture, stale re-arm). Not verified: an actual sleep/wake cycle,
+which Aaron will see in normal use. Logging out still ends the user session
+and its processes; `run-doc-reader.cmd enable-startup` restarts the stack at
+login.
+
+## Addendum (2026-09-13): follow the Windows default microphone
+
+After a lock/unlock the dictations were still silent even though the stream
+was alive: recordings of 1-100 s had RMS 0.00001 and 77% exact-zero samples,
+the fingerprint of the headset's wireless-dongle endpoint, while Windows'
+default input had become the same headset's Bluetooth endpoint. PortAudio
+only learns about endpoint changes on re-initialisation, and a plain
+`device=None` picks the MME default, not the WASAPI one Windows uses.
+
+Changes in `Recorder`: open Windows' WASAPI default input with automatic
+sample-rate conversion (wireless headsets refuse 16 kHz otherwise), falling
+back to the requested device without conversion and then to PortAudio's
+default; track the last non-silent frame and re-scan/reopen after 30 s of
+exact digital silence while idle; treat a hold whose capture is exact silence
+as a wrong endpoint (reopen, tell the user, do not send it to Whisper);
+report the device actually in use to the web app (`active_microphone_name`,
+shown as "System Default → Headset (PRO X 2)"). The helper registers for
+session-change notifications and reopens 4 s after unlock/logon or resume so a
+reconnecting Bluetooth headset is picked up. HUD while recording: the key
+actually configured, the live microphone name, and a level bar that turns
+into "no sound from the mic" after 1.5 s of silence. Helper log lines carry
+timestamps. Tests: 17 in `tests/test_windows_recorder.py`.

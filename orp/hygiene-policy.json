@@ -91,7 +91,9 @@
         "install-context-menu-service",
         "read-selection-service.sh",
         "run-doc-reader",
-        "uninstall-context-menu-service"
+        "uninstall-context-menu-service",
+        "run-doc-reader.cmd",
+        "run-doc-reader.ps1"
       ]
     },
     {
