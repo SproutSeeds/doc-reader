@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from array import array
 import io
 import json
 import os
@@ -12,6 +13,7 @@ import threading
 import time
 import traceback
 import unicodedata
+import wave
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from .local_voices import MODELS, POCKET_LANGUAGES, catalog, validate_voice
+from .http_safety import MAX_JSON_BYTES, read_body, validate_browser_write
 
 
 DEFAULT_ENGINES = ("chatterbox", "kokoro")
@@ -58,6 +61,8 @@ class TranscriptionResult:
     model: str
     generation_seconds: float
     segments: list[dict[str, Any]]
+    vad_retry: bool = False
+    requires_review: bool = False
 
 
 class EngineRegistry:
@@ -73,6 +78,7 @@ class EngineRegistry:
         self._pocket_voices: dict[str, Any] = {}
         self._kitten_model: Any | None = None
         self._synthesis_lock = threading.RLock()
+        self._transcription_lock = threading.RLock()
         self._whisper_model: Any | None = None
         self._load_errors: dict[str, str] = {}
 
@@ -178,6 +184,7 @@ class EngineRegistry:
         suffix: str = ".wav",
         language: str | None = None,
         word_timestamps: bool = False,
+        retry_without_vad: bool = False,
     ) -> TranscriptionResult:
         if "whisper" not in self.enabled_engines:
             raise ValueError("Speech-to-text is not enabled on this sidecar.")
@@ -198,16 +205,33 @@ class EngineRegistry:
             }
             if word_timestamps:
                 transcribe_kwargs["word_timestamps"] = True
-            try:
-                segments_iter, info = model.transcribe(str(temp_path), **transcribe_kwargs)
-            except TypeError:
-                if not word_timestamps:
-                    raise
-                transcribe_kwargs.pop("word_timestamps", None)
-                segments_iter, info = model.transcribe(str(temp_path), **transcribe_kwargs)
+            def decode() -> tuple[list[Any], Any]:
+                try:
+                    iterator, info = model.transcribe(str(temp_path), **transcribe_kwargs)
+                except TypeError as exc:
+                    if not word_timestamps or "word_timestamps" not in str(exc):
+                        raise
+                    transcribe_kwargs.pop("word_timestamps", None)
+                    iterator, info = model.transcribe(str(temp_path), **transcribe_kwargs)
+                # Whisper runs lazily; consume the iterator while holding the lock.
+                return list(iterator), info
+
+            vad_retry = False
+            with self._transcription_lock:
+                decoded, info = decode()
+                if (
+                    retry_without_vad
+                    and not any(str(getattr(segment, "text", "")).strip() for segment in decoded)
+                    and _dictation_wav_has_signal(audio)
+                ):
+                    vad_retry = True
+                    transcribe_kwargs["vad_filter"] = False
+                    transcribe_kwargs["condition_on_previous_text"] = False
+                    decoded, info = decode()
+                    decoded = [segment for segment in decoded if _credible_retry_segment(segment)]
             segments: list[dict[str, Any]] = []
             text_parts: list[str] = []
-            for segment in segments_iter:
+            for segment in decoded:
                 segment_text = str(getattr(segment, "text", "")).strip()
                 if segment_text:
                     text_parts.append(segment_text)
@@ -237,6 +261,8 @@ class EngineRegistry:
                 model=model_name,
                 generation_seconds=generation_seconds,
                 segments=segments,
+                vad_retry=vad_retry,
+                requires_review=vad_retry and bool(text_parts),
             )
         finally:
             try:
@@ -481,6 +507,37 @@ class EngineRegistry:
         return payload
 
 
+def _dictation_wav_has_signal(audio: bytes) -> bool:
+    """Bound the no-VAD retry to short PCM dictations with measured input."""
+    try:
+        with wave.open(io.BytesIO(audio), "rb") as reader:
+            seconds = reader.getnframes() / max(1, reader.getframerate())
+            if reader.getsampwidth() != 2 or not 0.35 <= seconds <= 300:
+                return False
+            samples = array("h", reader.readframes(reader.getnframes()))
+    except (wave.Error, EOFError, ValueError):
+        return False
+    if sys.byteorder != "little":
+        samples.byteswap()
+    if not samples:
+        return False
+    peak = max(abs(sample) for sample in samples) / 32768
+    rms = (sum(sample * sample for sample in samples) / len(samples)) ** 0.5 / 32768
+    return peak >= 0.005 and rms >= 0.001
+
+
+def _credible_retry_segment(segment: Any) -> bool:
+    try:
+        return (
+            bool(str(getattr(segment, "text", "")).strip())
+            and float(segment.avg_logprob) >= -1.0
+            and float(segment.no_speech_prob) <= 0.6
+            and float(segment.compression_ratio) <= 2.4
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 class TTSHandler(BaseHTTPRequestHandler):
     server_version = "DocReaderTTS/1.0"
 
@@ -499,6 +556,7 @@ class TTSHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         try:
+            validate_browser_write(self.headers)
             if self.path == "/v1/audio/speech":
                 payload = self._read_json()
                 result = self.registry.synthesize(
@@ -526,6 +584,7 @@ class TTSHandler(BaseHTTPRequestHandler):
                     suffix=_suffix_from_content_type(self.headers.get("Content-Type", "")),
                     language=_optional_string(self.headers.get("X-Doc-Reader-Language")),
                     word_timestamps=_header_flag(self.headers.get("X-Doc-Reader-Word-Timestamps")),
+                    retry_without_vad=_header_flag(self.headers.get("X-Doc-Reader-VAD-Retry")),
                 )
                 self._send_json(
                     {
@@ -537,10 +596,14 @@ class TTSHandler(BaseHTTPRequestHandler):
                         "model": result.model,
                         "generation_seconds": result.generation_seconds,
                         "segments": result.segments,
+                        "vad_retry": result.vad_retry,
+                        "requires_review": result.requires_review,
                     }
                 )
                 return
             self.send_error(HTTPStatus.NOT_FOUND)
+        except PermissionError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.FORBIDDEN)
         except ValueError as exc:
             self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
         except Exception as exc:  # noqa: BLE001
@@ -554,20 +617,16 @@ class TTSHandler(BaseHTTPRequestHandler):
         sys.stderr.write("[doc-reader-tts] " + (format % args) + "\n")
 
     def _read_json(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        if length <= 0:
+        raw = read_body(self, limit=MAX_JSON_BYTES)
+        if not raw:
             return {}
-        raw = self.rfile.read(length)
         payload = json.loads(raw.decode("utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("JSON payload must be an object.")
         return payload
 
     def _read_body(self) -> bytes:
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        if length <= 0:
-            return b""
-        return self.rfile.read(length)
+        return read_body(self)
 
     def _send_json(self, payload: dict[str, Any], *, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload, indent=2).encode("utf-8")

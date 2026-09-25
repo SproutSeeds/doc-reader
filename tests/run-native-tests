@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/doc-reader-native-tests.XXXXXX")"
+trap 'rm -rf "$TEST_DIR"' EXIT
+swiftc -swift-version 5 \
+  "$ROOT/macos/DocReaderApp/Sources/DocReaderApp/DictationAudioRecorder.swift" \
+  "$ROOT/tests/native/main.swift" -o "$TEST_DIR/recorder-tests"
+"$TEST_DIR/recorder-tests"
+swiftc -swift-version 5 \
+  "$ROOT/macos/DocReaderApp/Sources/DocReaderApp/SelectedTextReader.swift" \
+  "$ROOT/tests/native-readback/main.swift" -o "$TEST_DIR/readback-tests"
+"$TEST_DIR/readback-tests"

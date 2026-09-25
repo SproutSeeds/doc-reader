@@ -184,10 +184,27 @@ audio file with the Audio picker to transcribe it into a `Dictation` card. Check
 `Timestamps` before choosing the file when you want phrase-level timestamp lines
 saved with the transcript. Choose the microphone from the Dictation settings if
 the system default is not the input you want. Put the cursor in a text field,
-then hold the Option/Alt key to record from the selected Mac microphone. Doc
-Reader shows a small recording HUD while the key is held, sends the audio to the
-active speech-to-text sidecar when the key is released, inserts the transcription at
-the cursor, and adds the transcription as a `Dictation` card in the web app.
+then tap Option/Alt to start recording and tap again to stop. You can also hold
+Option while speaking and release to finish; a short tap keeps recording until
+the next tap. The Doc Reader menu-bar app also has **Start Dictation**,
+**Stop Dictation**, **Cancel Dictation**, and **Enable Speech-to-text** controls.
+Start Dictation enables speech-to-text if needed. Escape cancels capture or
+transcription, including while the recording is being finalized.
+
+Doc Reader shows a recording HUD and a meter measured from the saved audio.
+It sends the recording to the active speech-to-text sidecar, inserts the transcript
+at the cursor, and saves a `Dictation` card. If the speech filter discards a short
+recording with measurable signal, the local sidecar can retry once without that
+filter. Recovered text must pass confidence checks and is saved with a review
+label instead of being inserted automatically. Silent recordings prompt you to
+check mute or select a microphone. Your selected input stays selected, and
+**System Default** follows the Mac's default input.
+
+If Option does nothing, check the **Speech-to-text on/off** message on the page.
+Enable Speech-to-text, confirm the helper is online, and check microphone and
+Input Monitoring permission. Starting the helper alone does not enable dictation.
+The page displays up to 100 library cards at a time; **Show more** reveals older
+cards, and search checks the full transcript of every card.
 
 When a Logitech headset or mic is attached, Doc Reader pins it as the preferred
 dictation input instead of drifting back to macOS System Default during device
@@ -359,10 +376,20 @@ but the npm app path uses the native macOS wrapper.
 ## Right-click menu (macOS Services)
 
 The native macOS helper can read highlighted text from the keyboard. Highlight
-text in any app and tap the right Command key; Doc Reader copies the selection,
+text in any app and tap the right Command key; Doc Reader captures the selection,
 restores your clipboard, creates a reading card in the web app, and starts
 playback through the selected TTS backend. `Control+Command+R` is also accepted
 as a fallback.
+
+In Codex CLI's fullscreen view inside Terminal.app, drag to highlight text and
+tap right Command as usual. Doc Reader reads native accessible selections first;
+for Terminal's app-owned selection it performs the right-click copy automatically
+at the recorded selection point. No manual copying or Codex display-mode change
+is needed. The shortcut waits for modifier release, accepts only freshly copied
+text, and preserves the previous clipboard. If the selection changes or disappears,
+highlight it again before reading; an empty copy never falls back to older clipboard
+text. Capture and submission outcomes are logged without the selected text in
+`~/Library/Logs/doc-reader-tray.err.log`.
 
 Install a native `Services` entry as a fallback so highlighted text can also be
 read from right-click menus:

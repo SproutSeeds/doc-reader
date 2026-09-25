@@ -1364,247 +1364,6 @@ private final class PreferencesWindowController: NSWindowController {
     }
 }
 
-private struct PasteboardSnapshot {
-    struct Entry {
-        let type: NSPasteboard.PasteboardType
-        let data: Data
-    }
-
-    let items: [[Entry]]
-
-    static func capture(from pasteboard: NSPasteboard) -> PasteboardSnapshot {
-        let items = (pasteboard.pasteboardItems ?? []).map { item in
-            item.types.compactMap { type -> Entry? in
-                guard let data = item.data(forType: type) else {
-                    return nil
-                }
-                return Entry(type: type, data: data)
-            }
-        }
-        return PasteboardSnapshot(items: items)
-    }
-
-    func restore(to pasteboard: NSPasteboard) {
-        pasteboard.clearContents()
-        let restoredItems = items.map { entries -> NSPasteboardItem in
-            let item = NSPasteboardItem()
-            for entry in entries {
-                item.setData(entry.data, forType: entry.type)
-            }
-            return item
-        }
-        if !restoredItems.isEmpty {
-            pasteboard.writeObjects(restoredItems)
-        }
-    }
-}
-
-private final class DictationAudioRecorder: NSObject {
-    let url: URL
-    var onAudioLevel: ((Double) -> Void)?
-
-    private let engine = AVAudioEngine()
-    private let inputNode: AVAudioInputNode
-    private var inputFormat: AVAudioFormat?
-    private var finishing = false
-    private var lastLevelUpdateAt = Date.distantPast
-    private var audioFile: AVAudioFile?
-    private var bufferCount = 0
-    private(set) var isRecording = false
-
-    init(device: AVCaptureDevice, url: URL) throws {
-        self.url = url
-        inputNode = engine.inputNode
-        super.init()
-
-        if let audioDeviceID = Self.audioDeviceID(forUID: device.uniqueID),
-           let audioUnit = inputNode.audioUnit {
-            var currentDevice = audioDeviceID
-            let status = AudioUnitSetProperty(
-                audioUnit,
-                kAudioOutputUnitProperty_CurrentDevice,
-                kAudioUnitScope_Global,
-                0,
-                &currentDevice,
-                UInt32(MemoryLayout<AudioDeviceID>.size)
-            )
-            guard status == noErr else {
-                throw Self.error("The selected microphone could not be assigned to the audio engine.")
-            }
-        }
-
-        let resolvedInputFormat = inputNode.inputFormat(forBus: 0)
-        guard resolvedInputFormat.channelCount > 0, resolvedInputFormat.sampleRate > 0 else {
-            throw Self.error("The selected microphone has no readable audio format.")
-        }
-        inputFormat = resolvedInputFormat
-    }
-
-    func start() -> Bool {
-        guard let inputFormat else {
-            return false
-        }
-        do {
-            audioFile = try AVAudioFile(forWriting: url, settings: inputFormat.settings)
-        } catch {
-            return false
-        }
-
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-            guard let self, self.isRecording, !self.finishing else {
-                return
-            }
-            do {
-                try self.audioFile?.write(from: buffer)
-                self.bufferCount += 1
-                self.emitAudioLevel(from: buffer)
-            } catch {
-                self.finishing = true
-                self.engine.stop()
-            }
-        }
-
-        do {
-            try engine.start()
-            isRecording = true
-            return true
-        } catch {
-            inputNode.removeTap(onBus: 0)
-            audioFile = nil
-            return false
-        }
-    }
-
-    func stop(completion: @escaping (URL, Error?) -> Void) {
-        guard !finishing else {
-            return
-        }
-        finishing = true
-        inputNode.removeTap(onBus: 0)
-        engine.stop()
-        audioFile = nil
-        isRecording = false
-
-        let fileSize = (
-            try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber
-        )?.int64Value ?? 0
-        if bufferCount <= 0 || fileSize <= 0 {
-            completion(url, Self.error("No microphone samples were captured."))
-        } else {
-            completion(url, nil)
-        }
-    }
-
-    private func emitAudioLevel(from buffer: AVAudioPCMBuffer) {
-        let now = Date()
-        guard now.timeIntervalSince(lastLevelUpdateAt) >= 0.08 else {
-            return
-        }
-        lastLevelUpdateAt = now
-        let level = Self.audioLevel(from: buffer)
-        DispatchQueue.main.async { [weak self] in
-            self?.onAudioLevel?(level)
-        }
-    }
-
-    private static func audioLevel(from buffer: AVAudioPCMBuffer) -> Double {
-        let frameCount = Int(buffer.frameLength)
-        guard frameCount > 0 else {
-            return 0
-        }
-        var sumSquares = 0.0
-        var sampleCount = 0
-
-        if let channels = buffer.floatChannelData {
-            for channel in 0..<Int(buffer.format.channelCount) {
-                let values = channels[channel]
-                for index in 0..<frameCount {
-                    let value = Double(values[index])
-                    sumSquares += value * value
-                }
-                sampleCount += frameCount
-            }
-        } else if let channels = buffer.int16ChannelData {
-            for channel in 0..<Int(buffer.format.channelCount) {
-                let values = channels[channel]
-                for index in 0..<frameCount {
-                    let value = Double(values[index]) / Double(Int16.max)
-                    sumSquares += value * value
-                }
-                sampleCount += frameCount
-            }
-        }
-
-        guard sampleCount > 0 else {
-            return 0
-        }
-        return min(1.0, max(0.0, sqrt(sumSquares / Double(sampleCount)) * 8.0))
-    }
-
-    private static func audioDeviceID(forUID uid: String) -> AudioDeviceID? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(
-            AudioObjectID(kAudioObjectSystemObject),
-            &address,
-            0,
-            nil,
-            &size
-        ) == noErr else {
-            return nil
-        }
-
-        let count = Int(size) / MemoryLayout<AudioDeviceID>.size
-        var deviceIDs = Array(repeating: AudioDeviceID(0), count: count)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject),
-            &address,
-            0,
-            nil,
-            &size,
-            &deviceIDs
-        ) == noErr else {
-            return nil
-        }
-
-        for deviceID in deviceIDs {
-            var uidAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceUID,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var uidSize = UInt32(MemoryLayout<CFString?>.size)
-            var deviceUID: CFString?
-            let status = withUnsafeMutablePointer(to: &deviceUID) { pointer in
-                AudioObjectGetPropertyData(
-                    deviceID,
-                    &uidAddress,
-                    0,
-                    nil,
-                    &uidSize,
-                    pointer
-                )
-            }
-            if status == noErr, let deviceUID, String(deviceUID) == uid {
-                return deviceID
-            }
-        }
-        return nil
-    }
-
-    private static func error(_ message: String) -> NSError {
-        NSError(
-            domain: "com.sproutseeds.read-docs.dictation",
-            code: 1,
-            userInfo: [NSLocalizedDescriptionKey: message]
-        )
-    }
-}
-
 private final class RecordingOverlayPanel: NSPanel {
     override var canBecomeKey: Bool {
         true
@@ -1615,7 +1374,7 @@ private final class RecordingOverlayPanel: NSPanel {
     }
 }
 
-private final class AppDelegate: NSObject, NSApplicationDelegate {
+private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let managedRoot = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".doc-reader-managed", isDirectory: true)
     private let webBaseURL = URL(string: "http://127.0.0.1:8766")!
@@ -1628,6 +1387,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusMenuItem = NSMenuItem(title: "Ready.", action: nil, keyEquivalent: "")
     private let pauseMenuItem = NSMenuItem(title: "Pause Web Reading", action: #selector(togglePause), keyEquivalent: "")
     private let stopMenuItem = NSMenuItem(title: "Stop Web Reading", action: #selector(stopReading), keyEquivalent: "")
+    private let dictationMenuItem = NSMenuItem(title: "Start Dictation", action: #selector(toggleDictationFromMenu), keyEquivalent: "")
+    private let enableDictationMenuItem = NSMenuItem(title: "Enable Speech-to-text", action: #selector(toggleDictationEnabled), keyEquivalent: "")
+    private var dictationSettingPending = false
+    private var cancelFinishingRecording = false
+    private var microphoneRequestID: UUID?
     private var statusTimer: Timer?
     private var fallbackWebProcess: Process?
     private var startupOrchestrationInProgress = false
@@ -1640,6 +1404,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastDictationGestureAt = Date.distantPast
     private var dictationEnabled = false
     private var audioRecorder: DictationAudioRecorder?
+    private var finishingAudioRecorder: DictationAudioRecorder?
     private var recordingURL: URL?
     private var recordingStartedAt: Date?
     private var recordingStartPending = false
@@ -1675,6 +1440,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastSavedRecordingContentType = ""
     private var lastSavedRecordingPeakLevel = 0.0
     private var lastSavedRecordingCreatedAt: TimeInterval = 0
+    private var silentMicrophoneBackoff: [String: Date] = [:]
     private var webReadingPaused = false
     private var webActiveItemID: String?
     private let optionKeyCodes: Set<UInt16> = [58, 61]
@@ -1688,7 +1454,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private let maximumDictationRecordingSeconds: TimeInterval = 300
     private let dictationTranscriptionTimeoutSeconds: TimeInterval = 120
     private let staleRecordingLevelSeconds: TimeInterval = 30
+    private let minimumDictationSignalPeakLevel = 0.005
+    private let silentMicrophoneRetryDelaySeconds: TimeInterval = 180
     private var selectedTextReadInProgress = false
+    private let selectedTextReader = SelectedTextReader()
+
+    private var dictationCaptureBusy: Bool {
+        audioRecorder != nil || finishingAudioRecorder != nil || recordingStartPending
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -1699,6 +1472,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
         installDictationHotkeyMonitor()
         installSelectedTextReadbackMonitor()
+        selectedTextReader.onDiagnostic = { [weak self] message in self?.logDictation(message) }
+        selectedTextReader.startMonitoring()
         ensureWebAppRunning()
         ensureStartupOrchestration()
         statusTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
@@ -1739,11 +1514,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.imagePosition = .imageOnly
 
         let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.delegate = self
         menu.addItem(NSMenuItem(title: "Open DocReader Page", action: #selector(openReader), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Read Clipboard in DocReader", action: #selector(readClipboard), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Read Selected Text (Right Command or Command-L)", action: #selector(readSelectedText), keyEquivalent: ""))
         menu.addItem(pauseMenuItem)
         menu.addItem(stopMenuItem)
+        menu.addItem(.separator())
+        menu.addItem(dictationMenuItem)
+        menu.addItem(enableDictationMenuItem)
+        menu.addItem(NSMenuItem(title: "Cancel Dictation", action: #selector(cancelDictationRecording), keyEquivalent: ""))
         menu.addItem(.separator())
         statusMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
@@ -1755,6 +1536,53 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         item.menu = menu
         updateMenuControls()
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        updateMenuControls(running: webActiveItemID != nil && !webReadingPaused, paused: webReadingPaused)
+    }
+
+    @objc private func toggleDictationEnabled() {
+        guard !dictationSettingPending else { return }
+        setDictationEnabled(!dictationEnabled)
+    }
+
+    private func setDictationEnabled(_ enabled: Bool, completion: (() -> Void)? = nil) {
+        dictationSettingPending = true
+        enableDictationMenuItem.isEnabled = false
+        postWebJSON(path: "/api/settings", payload: ["stt_enabled": enabled], openWhenDone: false) { [weak self] succeeded in
+            guard let self else { return }
+            self.dictationSettingPending = false
+            self.enableDictationMenuItem.isEnabled = true
+            if succeeded {
+                self.dictationEnabled = enabled
+                self.enableDictationMenuItem.state = enabled ? .on : .off
+                if !enabled { self.cancelDictationRecording() }
+                completion?()
+            }
+        }
+    }
+
+    @objc private func toggleDictationFromMenu() {
+        if audioRecorder != nil || recordingStartPending {
+            optionKeyWasDown = false
+            dictationGestureActive = false
+            stopDictationRecording(send: true)
+            return
+        }
+        guard finishingAudioRecorder == nil, dictationTranscriptionID == nil else { return }
+        let start = { [weak self] in
+            guard let self else { return }
+            self.dictationGestureActive = true
+            self.dictationLatchedByRapidRelease = true
+            self.lastDictationGestureAt = Date()
+            self.startDictationRecordingIfEnabled(allowStateRefresh: false)
+        }
+        if dictationEnabled {
+            start()
+        } else {
+            setDictationEnabled(true, completion: start)
+        }
     }
 
     @objc private func openReader() {
@@ -1784,7 +1612,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func readSelectedText() {
-        guard audioRecorder == nil, !recordingStartPending, dictationTranscriptionID == nil else {
+        guard !dictationCaptureBusy, dictationTranscriptionID == nil else {
             statusMenuItem.title = "Finish dictation before reading selected text."
             return
         }
@@ -1796,37 +1624,33 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             statusMenuItem.title = "Allow Accessibility for selected-text reading."
             return
         }
-
+        guard let sourceApp = NSWorkspace.shared.frontmostApplication else { return }
         selectedTextReadInProgress = true
         statusMenuItem.title = "Copying selected text..."
-        let sourceName = NSWorkspace.shared.frontmostApplication?.localizedName ?? "Current App"
-        let pasteboard = NSPasteboard.general
-        let snapshot = PasteboardSnapshot.capture(from: pasteboard)
-
-        pasteboard.clearContents()
-        sendCopyShortcut()
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
-            guard let self else {
-                return
-            }
-            let copied = pasteboard.string(forType: .string) ?? ""
-            let cleaned = copied.trimmingCharacters(in: .whitespacesAndNewlines)
-            snapshot.restore(to: pasteboard)
+        let sourceName = sourceApp.localizedName ?? "Current App"
+        let sourceID = sourceApp.bundleIdentifier ?? "unknown"
+        selectedTextReader.read(from: sourceApp) { [weak self] result in
+            guard let self else { return }
             self.selectedTextReadInProgress = false
-
-            guard !cleaned.isEmpty else {
-                self.statusMenuItem.title = "No selected text found."
+            let selection: SelectedTextReader.Selection
+            switch result {
+            case .success(let value): selection = value
+            case .failure(let error):
+                self.statusMenuItem.title = error.localizedDescription
+                self.logDictation("selected-text capture failed app=\(sourceID) reason=\(error.localizedDescription)")
                 return
             }
-
+            guard !self.dictationCaptureBusy, self.dictationTranscriptionID == nil else { return }
+            self.logDictation("selected-text captured app=\(sourceID) method=\(selection.method) chars=\(selection.text.count)")
             let label = sourceName == "Doc Reader" ? "Selected Text" : "Selection from \(sourceName)"
             self.statusMenuItem.title = "Reading selected text..."
             self.postWebJSON(
                 path: "/api/text",
-                payload: ["label": label, "text": cleaned],
+                payload: ["label": label, "text": selection.text],
                 openWhenDone: false
-            )
+            ) { [weak self] succeeded in
+                self?.logDictation("selected-text submission app=\(sourceID) ok=\(succeeded)")
+            }
         }
     }
 
@@ -1868,6 +1692,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         dictationGestureActive = false
         dictationLatchedByRapidRelease = false
         lastDictationGestureAt = Date()
+        if finishingAudioRecorder != nil {
+            cancelFinishingRecording = true
+            statusMenuItem.title = "Canceling dictation recording..."
+            logDictation("cancel requested during recording finalization")
+            publishNativeDictationStatus()
+            return
+        }
         if audioRecorder == nil,
            !recordingStartPending,
            cancelDictationTranscription(reason: "transcription canceled from overlay") {
@@ -1905,7 +1736,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleReadbackHotkey(_ event: NSEvent) {
-        if event.keyCode == 53, audioRecorder != nil || recordingStartPending || dictationTranscriptionID != nil {
+        guard !selectedTextReader.isExpectedCopyKey(event) else { return }
+        if event.keyCode == 53, dictationCaptureBusy || dictationTranscriptionID != nil {
             cancelDictationRecording()
             return
         }
@@ -1913,6 +1745,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags.contains(.option), pendingDictationStart != nil {
+            pendingDictationStart?.cancel()
+            pendingDictationStart = nil
+            optionKeyWasDown = false
+            dictationGestureActive = false
+        }
         let usesControlCommand = flags.contains(.control) && flags.contains(.command)
         let usesControlOption = flags.contains(.control) && flags.contains(.option)
         let usesLegacyReadback = event.keyCode == readSelectedTextKeyCode && (usesControlCommand || usesControlOption)
@@ -1923,6 +1761,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             cancelPendingReadbackGesture(reason: "right command readback canceled by key chord")
         }
         guard usesLegacyReadback || usesCommandLReadback else {
+            selectedTextReader.noteNonReadbackKey(event)
             return
         }
         pendingDictationStart?.cancel()
@@ -1931,7 +1770,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingReadbackGesture = nil
         readbackKeyWasDown = false
         readbackGestureCanceled = false
-        if optionKeyWasDown, audioRecorder == nil, !recordingStartPending {
+        if optionKeyWasDown, !dictationCaptureBusy {
             optionKeyWasDown = false
             dictationGestureActive = false
         }
@@ -1943,10 +1782,18 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         handleReadbackModifierGesture(event, flags: flags)
         let optionDown = flags.contains(.option)
+        if optionDown { selectedTextReader.invalidate() }
         let optionOnlyGesture = optionDown && flags.intersection([.command, .control, .shift]).isEmpty
         if optionOnlyGesture {
             pendingDictationStop?.cancel()
             pendingDictationStop = nil
+            if finishingAudioRecorder != nil {
+                statusMenuItem.title = "Finishing previous dictation recording."
+                logDictation("option ignored; recording finalization in progress")
+                showRecordingOverlay(text: "Finishing...")
+                publishNativeDictationStatus()
+                return
+            }
             if audioRecorder != nil || recordingStartPending {
                 if isRapidToggleStop() {
                     dictationLatchedByRapidRelease = true
@@ -1981,7 +1828,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                     pendingDictationStart = nil
                     logDictation("option dictation start canceled by modifier chord")
                 }
-                if audioRecorder == nil, !recordingStartPending {
+                if !dictationCaptureBusy {
                     optionKeyWasDown = false
                     dictationGestureActive = false
                 }
@@ -2094,9 +1941,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             pendingDictationStart?.cancel()
             pendingDictationStart = nil
             optionKeyWasDown = false
-            dictationGestureActive = false
+            dictationGestureActive = true
+            dictationLatchedByRapidRelease = true
             lastDictationGestureAt = Date()
-            logDictation("option up before recording start")
+            logDictation("option tap starts latched recording")
+            startDictationRecordingIfEnabled()
             return
         }
 
@@ -2113,7 +1962,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             self.optionKeyWasDown = false
             self.dictationGestureActive = false
             self.lastDictationGestureAt = Date()
-            if self.audioRecorder != nil || self.recordingStartPending {
+            if self.finishingAudioRecorder != nil {
+                self.dictationGestureActive = true
+                self.showRecordingOverlay(text: "Finishing...")
+                self.statusMenuItem.title = "Finishing previous dictation recording."
+                self.logDictation("option release ignored; recording finalization in progress")
+                self.publishNativeDictationStatus()
+                return
+            }
+            if (self.audioRecorder != nil || self.recordingStartPending) && self.isRapidToggleStop() {
                 self.dictationLatchedByRapidRelease = true
                 self.dictationGestureActive = true
                 self.showRecordingOverlay(text: "Recording... tap Option to stop")
@@ -2180,7 +2037,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                     if self.dictationEnabled {
                         self.startDictationRecordingIfEnabled(allowStateRefresh: false)
                     } else {
+                        self.dictationGestureActive = false
+                        self.dictationLatchedByRapidRelease = false
+                        self.statusMenuItem.title = "Speech-to-text is off. Enable it in the Doc Reader menu or page."
                         self.logDictation("option ignored; dictation disabled")
+                        self.showRecordingOverlay(text: "Speech-to-text is off")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                            guard let self, !self.dictationCaptureBusy else { return }
+                            self.hideRecordingOverlay()
+                        }
                     }
                 }
             } else {
@@ -2188,7 +2053,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return
         }
-        guard audioRecorder == nil, !recordingStartPending else {
+        guard !dictationCaptureBusy else {
             logDictation("option ignored; recorder already active or starting")
             return
         }
@@ -2212,9 +2077,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func requestMicrophoneAndStartRecording() {
+        let requestID = UUID()
+        microphoneRequestID = requestID
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
             DispatchQueue.main.async {
-                guard let self else {
+                guard let self, self.microphoneRequestID == requestID, self.recordingStartPending else {
                     return
                 }
                 guard granted else {
@@ -2266,6 +2133,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             recorder.onAudioLevel = { [weak self] level in
                 self?.updateDictationAudioLevel(level)
             }
+            recorder.onFailure = { [weak self, weak recorder] error in
+                guard let self, let recorder, self.audioRecorder === recorder else { return }
+                self.logDictation("microphone capture stopped: \(error.localizedDescription)")
+                self.stopDictationRecording(send: false)
+            }
             guard recorder.start() else {
                 setRecordingStartPending(false)
                 activeMicrophoneID = ""
@@ -2313,13 +2185,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let elapsed = recordingStartedAt.map { Date().timeIntervalSince($0) } ?? 0
         let outputFileURL = recorder.url
+        let contentType = recorder.contentType
         recordingStartedAt = nil
         let shouldSend = send && elapsed >= 0.35
+        cancelFinishingRecording = false
         dictationLatchedByRapidRelease = false
+        finishingAudioRecorder = recorder
         audioRecorder = nil
         recordingURL = nil
+        showRecordingOverlay(text: send ? "Finishing..." : "Canceling...")
+        statusMenuItem.title = send ? "Finishing dictation recording..." : "Canceling dictation recording..."
         publishNativeDictationStatus()
-        let peakLevel = dictationPeakAudioLevel
         let recordedMicrophoneID = activeMicrophoneID
         activeMicrophoneID = ""
 
@@ -2327,6 +2203,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else {
                 return
             }
+            self.finishingAudioRecorder = nil
+            self.dictationGestureActive = false
+            let peakLevel = recorder.peakLevel
+            self.dictationPeakAudioLevel = peakLevel
+            let shouldSend = shouldSend && !self.cancelFinishingRecording
+            self.cancelFinishingRecording = false
             if let error {
                 self.hideRecordingOverlay()
                 self.dictationTargetApp = nil
@@ -2334,6 +2216,40 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.statusMenuItem.title = "Recording failed: \(error.localizedDescription)"
                 self.lastDictationEvent = "recording finish failed: \(error.localizedDescription)"
                 self.logDictation(String(format: "recording finish failed %@ peak_level=%.2f", error.localizedDescription, peakLevel))
+                self.publishNativeDictationStatus()
+                return
+            }
+
+            if shouldSend && peakLevel < self.minimumDictationSignalPeakLevel {
+                _ = self.saveDictationRecording(
+                    url,
+                    elapsed: elapsed,
+                    peakLevel: peakLevel,
+                    contentType: contentType,
+                    microphoneID: recordedMicrophoneID
+                )
+                self.showRecordingOverlay(text: "No mic signal")
+                self.statusMenuItem.title = "No microphone signal. Check mute or choose an input on the Doc Reader page."
+                self.lastDictationEvent = "no microphone signal detected"
+                self.logDictation(
+                    String(
+                        format: "recording stopped; no microphone signal elapsed=%.2fs peak_level=%.2f microphone=%@",
+                        elapsed,
+                        peakLevel,
+                        recordedMicrophoneID
+                    )
+                )
+                self.dictationTargetApp = nil
+                try? FileManager.default.removeItem(at: outputFileURL)
+                self.publishNativeDictationStatus()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                    guard let self else {
+                        return
+                    }
+                    if self.audioRecorder == nil && self.finishingAudioRecorder == nil && self.dictationTranscriptionID == nil {
+                        self.hideRecordingOverlay()
+                    }
+                }
                 return
             }
 
@@ -2342,14 +2258,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                     url,
                     elapsed: elapsed,
                     peakLevel: peakLevel,
-                    contentType: "audio/wav",
+                    contentType: contentType,
                     microphoneID: recordedMicrophoneID
                 )
                 self.showRecordingOverlay(text: "Transcribing...")
                 self.statusMenuItem.title = "Transcribing..."
                 self.lastDictationEvent = String(format: "transcribing %.2fs recording", elapsed)
                 self.logDictation(String(format: "recording stopped; transcribing elapsed=%.2fs peak_level=%.2f", elapsed, peakLevel))
-                self.sendDictationAudio(url, contentType: "audio/wav", elapsed: elapsed)
+                self.sendDictationAudio(url, contentType: contentType, elapsed: elapsed)
             } else {
                 self.hideRecordingOverlay()
                 self.dictationTargetApp = nil
@@ -2363,10 +2279,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setRecordingStartPending(_ pending: Bool) {
         recordingStartPending = pending
         recordingStartPendingAt = pending ? Date() : nil
+        if !pending { microphoneRequestID = nil }
     }
 
     private func enforceDictationRecordingSafetyLimits() {
-        guard audioRecorder != nil || recordingStartPending else {
+        guard dictationCaptureBusy else {
             return
         }
         if recordingStartPending,
@@ -2404,13 +2321,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func selectedMicrophoneDevice() -> AVCaptureDevice? {
         let devices = audioCaptureDevices()
-        if !selectedMicrophoneID.isEmpty,
-           let selected = devices.first(where: { $0.uniqueID == selectedMicrophoneID }) {
-            return selected
-        }
-        if let preferred = preferredMicrophoneDevice(in: devices) {
-            selectedMicrophoneID = preferred.uniqueID
-            return preferred
+        if !selectedMicrophoneID.isEmpty {
+            // Keep the user's explicit input. Silence/disconnection should be
+            // reported instead of silently recording from another device.
+            return devices.first { $0.uniqueID == selectedMicrophoneID }
         }
         return AVCaptureDevice.default(for: .audio) ?? devices.first
     }
@@ -2429,12 +2343,55 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         })
     }
 
+    private func isDictationFallbackCandidate(_ device: AVCaptureDevice) -> Bool {
+        let value = "\(device.localizedName) \(device.uniqueID)".lowercased()
+        let blockedTokens = [
+            "blackhole",
+            "virtual",
+            "cam link",
+            "capture",
+            "obs",
+            "aggregate",
+        ]
+        return !blockedTokens.contains(where: { value.contains($0) })
+    }
+
     private func audioCaptureDevices() -> [AVCaptureDevice] {
         AVCaptureDevice.DiscoverySession(
             deviceTypes: [.microphone],
             mediaType: .audio,
             position: .unspecified
         ).devices
+    }
+
+    private func markMicrophoneTemporarilySilent(_ microphoneID: String) {
+        let cleaned = microphoneID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else {
+            return
+        }
+        silentMicrophoneBackoff[cleaned] = Date().addingTimeInterval(silentMicrophoneRetryDelaySeconds)
+        if selectedMicrophoneID == cleaned {
+            selectedMicrophoneID = ""
+        }
+    }
+
+    private func isMicrophoneTemporarilySilent(_ microphoneID: String) -> Bool {
+        let cleaned = microphoneID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty, let retryAt = silentMicrophoneBackoff[cleaned] else {
+            return false
+        }
+        if retryAt <= Date() {
+            silentMicrophoneBackoff.removeValue(forKey: cleaned)
+            return false
+        }
+        return true
+    }
+
+    private func pruneSilentMicrophoneBackoff() {
+        let now = Date()
+        for (microphoneID, retryAt) in silentMicrophoneBackoff where retryAt <= now {
+            silentMicrophoneBackoff.removeValue(forKey: microphoneID)
+        }
     }
 
     private var dictationRecordingsURL: URL {
@@ -2456,12 +2413,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func publishNativeDictationStatus(activeMicrophoneID overrideActiveMicrophoneID: String? = nil) {
+        pruneSilentMicrophoneBackoff()
         let devices = audioCaptureDevices().map {
             ["id": $0.uniqueID, "name": $0.localizedName]
         }
         let recentLevel = Date().timeIntervalSince(lastDictationAudioLevelAt) < 1.0
         let level = audioRecorder?.isRecording == true && recentLevel ? dictationAudioLevel : 0
-        let activeID = overrideActiveMicrophoneID ?? activeMicrophoneID
+        let activeID = audioRecorder != nil ? activeMicrophoneID : ""
         var payload: [String: Any] = [
             "devices": devices,
             "microphone_authorization": microphoneAuthorizationLabel(),
@@ -2469,10 +2427,13 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             "accessibility_trusted": AXIsProcessTrusted(),
             "active_microphone_id": activeID,
             "recording": audioRecorder?.isRecording ?? false,
+            "recording_finish_pending": finishingAudioRecorder != nil,
             "recording_start_pending": recordingStartPending,
+            "transcribing": dictationTranscriptionID != nil,
             "last_dictation_event": lastDictationEvent,
             "audio_level": level,
             "audio_peak_level": dictationPeakAudioLevel,
+            "silent_microphone_ids": Array(silentMicrophoneBackoff.keys),
         ]
         if !lastSavedRecordingPath.isEmpty {
             payload["last_recording_path"] = lastSavedRecordingPath
@@ -2481,6 +2442,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             payload["last_recording_content_type"] = lastSavedRecordingContentType
             payload["last_recording_peak_level"] = lastSavedRecordingPeakLevel
             payload["last_recording_created_at"] = lastSavedRecordingCreatedAt
+            payload["last_recording_meter_version"] = 2
         }
         var request = URLRequest(url: webURL(path: "/api/native/dictation"))
         request.httpMethod = "POST"
@@ -2719,6 +2681,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                             self.lastDictationEvent = "transcription produced no text"
                             self.logDictation("transcription produced no text")
                             self.dictationTargetApp = nil
+                        } else if payload?["requires_review"] as? Bool == true {
+                            self.statusMenuItem.title = "Review recovered transcript in Dictations."
+                            self.logDictation("recovered transcription saved for review")
+                            self.dictationTargetApp = nil
                         } else {
                             self.lastDictationEvent = "transcription received"
                             self.logDictation("transcription received chars=\(transcription.count)")
@@ -2787,17 +2753,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private func sendPasteShortcut() {
         let source = CGEventSource(stateID: .combinedSessionState)
         let vKey: CGKeyCode = 0x09
-        let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
-        let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
-        keyDown?.flags = .maskCommand
-        keyUp?.flags = .maskCommand
-        keyDown?.post(tap: .cghidEventTap)
-        keyUp?.post(tap: .cghidEventTap)
-    }
-
-    private func sendCopyShortcut() {
-        let source = CGEventSource(stateID: .combinedSessionState)
-        let vKey: CGKeyCode = 0x08
         let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
         let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
         keyDown?.flags = .maskCommand
@@ -2904,6 +2859,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         recordingWindow?.setFrame(rect, display: true)
         recordingLabel?.stringValue = text
         recordingCancelButton?.isHidden = audioRecorder == nil
+            && finishingAudioRecorder == nil
             && !recordingStartPending
             && dictationTranscriptionID == nil
         updateRecordingLevelMeter(dictationAudioLevel)
@@ -3155,19 +3111,25 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 self.webReadingPaused = paused
                 self.webActiveItemID = activeID.isEmpty ? nil : activeID
-                self.dictationEnabled = sttEnabled
+                let wasEnabled = self.dictationEnabled
+                if !self.dictationSettingPending { self.dictationEnabled = sttEnabled }
                 self.selectedMicrophoneID = selectedMicrophoneID
+                if wasEnabled && !self.dictationEnabled && (self.dictationCaptureBusy || self.dictationTranscriptionID != nil) {
+                    self.cancelDictationRecording()
+                }
                 if sttEnabled {
                     self.requestInputMonitoringAccessIfNeeded()
                 }
-                self.statusMenuItem.title = status
+                if !self.dictationCaptureBusy && self.dictationTranscriptionID == nil {
+                    self.statusMenuItem.title = self.dictationEnabled ? status : "Speech-to-text is off. Enable it to record."
+                }
                 self.updateMenuControls(running: running, paused: paused)
                 completion?()
             }
         }.resume()
     }
 
-    private func postWebJSON(path: String, payload: [String: Any]?, openWhenDone: Bool) {
+    private func postWebJSON(path: String, payload: [String: Any]?, openWhenDone: Bool, completion: ((Bool) -> Void)? = nil) {
         ensureWebAppRunning { [weak self] in
             guard let self else {
                 return
@@ -3194,6 +3156,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                             ?? "Request failed."
                         self.statusMenuItem.title = message
                     }
+                    completion?(succeeded)
                 }
             }.resume()
         }
@@ -3289,6 +3252,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateMenuControls(running: Bool = false, paused: Bool = false) {
+        dictationMenuItem.title = audioRecorder != nil || recordingStartPending ? "Stop Dictation" : "Start Dictation"
+        dictationMenuItem.isEnabled = finishingAudioRecorder == nil && dictationTranscriptionID == nil && !dictationSettingPending
+        enableDictationMenuItem.state = dictationEnabled ? .on : .off
+        enableDictationMenuItem.isEnabled = !dictationSettingPending
         pauseMenuItem.isEnabled = running || paused
         pauseMenuItem.title = paused ? "Resume Web Reading" : "Pause Web Reading"
         stopMenuItem.isEnabled = running || paused

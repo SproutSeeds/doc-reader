@@ -13,6 +13,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isWebProcessForPort } from "./process-targets.js";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launcher = join(packageRoot, "run-doc-reader");
@@ -397,7 +398,7 @@ async function cleanupWebProcesses() {
     if (entry.pid === process.pid) {
       return false;
     }
-    return entry.command.includes(" -m doc_reader.webapp");
+    return isWebProcessForPort(entry.command, webPort);
   });
 
   if (webRoots.length === 0) {
@@ -526,6 +527,8 @@ async function installApp() {
     return appExitCode;
   }
   registerInstalledApp();
+  // enable-startup already refreshed this bundle before launching it. Replacing
+  // a second time here swaps the executable underneath the new native helper.
   const dockExitCode = applicationsAppState() === "installed" ? 0 : installApplicationsApp();
   const serviceExitCode = await runScript("install-context-menu-service");
   const webExitCode = await startWebAgent();
@@ -762,8 +765,11 @@ function macSpeechLaunchAgentNeedsRefresh() {
   }
   try {
     const plist = readFileSync(ttsLaunchAgentPlist, "utf8");
+    const match = plist.match(/<string>--engines<\/string>\s*<string>([^<]+)<\/string>/);
+    const installedEngines = new Set((match?.[1] || "").split(",").map((engine) => engine.trim()));
     return (
-      !plist.includes(`<string>${ttsMacEngines}</string>`) ||
+      // Preserve additional installed engines (for example Pocket and Kitten).
+      ttsMacEngines.split(",").some((engine) => !installedEngines.has(engine)) ||
       !plist.includes("<key>DOC_READER_STT_MODEL</key>") ||
       !plist.includes("<key>DOC_READER_STT_COMPUTE_TYPE</key>")
     );
@@ -962,6 +968,8 @@ async function installUmbraTts() {
   for (const [local, remote] of [
     [tempFiles.initPy, `${ttsUmbraRoot}/doc_reader/__init__.py`],
     [join(packageRoot, "doc_reader", "tts_service.py"), `${ttsUmbraRoot}/doc_reader/tts_service.py`],
+    [join(packageRoot, "doc_reader", "local_voices.py"), `${ttsUmbraRoot}/doc_reader/local_voices.py`],
+    [join(packageRoot, "doc_reader", "http_safety.py"), `${ttsUmbraRoot}/doc_reader/http_safety.py`],
     [tempFiles.runCmd, umbraScriptPath("run-tts.cmd")],
     [tempFiles.stopPs1, umbraScriptPath("stop-tts.ps1")],
   ]) {

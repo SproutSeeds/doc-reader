@@ -191,6 +191,8 @@ class WebappLibraryTests(unittest.TestCase):
         self.assertIn("remote speech online", INDEX_HTML)
         self.assertIn("speech ready", INDEX_HTML)
         self.assertIn("Speech-to-text", INDEX_HTML)
+        self.assertIn("check mic signal", INDEX_HTML)
+        self.assertIn("no mic signal", INDEX_HTML)
         self.assertNotIn("4090 online", INDEX_HTML)
         self.assertNotIn("4090 Whisper", INDEX_HTML)
         self.assertNotIn("Transcribing on 4090", INDEX_HTML)
@@ -210,6 +212,37 @@ class WebappLibraryTests(unittest.TestCase):
 
             self.assertFalse(disabled_status["stt"]["enabled"])
             self.assertEqual(disabled_status["stt"]["hotkey"], "Option")
+
+    def test_native_status_flags_zero_peak_recording_as_mic_signal_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            reader = ReaderService(Path(directory))
+
+            status = reader.update_native_dictation_status({
+                "devices": [{"id": "headset-1", "name": "Logi USB Headset"}],
+                "microphone_authorization": "authorized",
+                "input_monitoring_trusted": True,
+                "accessibility_trusted": True,
+                "active_microphone_id": "",
+                "recording": False,
+                "recording_finish_pending": True,
+                "recording_start_pending": False,
+                "last_dictation_event": "no microphone signal detected",
+                "audio_level": 0,
+                "audio_peak_level": 0,
+                "last_recording_path": "/tmp/dictation.wav",
+                "last_recording_bytes": 791296,
+                "last_recording_seconds": 4.15,
+                "last_recording_content_type": "audio/wav",
+                "last_recording_peak_level": 0,
+                "last_recording_created_at": time.time(),
+                "silent_microphone_ids": ["headset-1"],
+            })
+
+            microphone = status["stt"]["microphone"]
+            self.assertTrue(microphone["signal_warning"])
+            self.assertTrue(microphone["recording_finish_pending"])
+            self.assertEqual(microphone["silent_input_ids"], ["headset-1"])
+            self.assertEqual(microphone["last_recording"]["peak_level"], 0)
 
     def test_default_tts_backend_is_mac_local(self) -> None:
         old_backend = os.environ.pop("DOC_READER_WEB_SPEECH_BACKEND", None)

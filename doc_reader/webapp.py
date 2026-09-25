@@ -30,6 +30,7 @@ from urllib import request as urlrequest
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .extract import iter_document_blocks
+from .http_safety import MAX_JSON_BYTES, read_body, validate_browser_write
 from .speech import (
     DEFAULT_TTS_MAC_URL,
     DEFAULT_TTS_UMBRA_URL,
@@ -225,6 +226,7 @@ class ReaderService:
         self.analysis_batch_dir.mkdir(parents=True, exist_ok=True)
 
         self._lock = threading.RLock()
+        self._settings_lock = threading.RLock()
         self._process: subprocess.Popen[str] | None = None
         self._active_id: str | None = None
         self._paused_id: str | None = None
@@ -713,41 +715,34 @@ class ReaderService:
             return self.state()
 
     def update_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
-        settings = self._settings()
-        backend = payload.get("speech_backend")
-        if backend is not None:
-            backend = str(backend).strip()
-            if backend not in SPEECH_BACKENDS:
-                raise ValueError("Unknown speech backend.")
-            settings["speech_backend"] = backend
-            self._status = f"Voice: {SPEECH_BACKENDS[backend]}"
-        if "stt_enabled" in payload:
-            settings["stt_enabled"] = bool(payload.get("stt_enabled"))
-            self._status = (
-                "Dictation hotkey enabled."
-                if settings["stt_enabled"]
-                else "Dictation hotkey disabled."
-            )
-        rate_value = payload.get("read_rate", payload.get("readRate"))
-        if rate_value is not None:
-            read_rate = _normalize_read_rate(rate_value)
-            settings["read_rate"] = read_rate
-            self._write_rate_control(read_rate)
-            self._status = f"Read speed: {read_rate} WPM."
-        if "microphone_id" in payload:
-            microphone_id = str(payload.get("microphone_id") or "").strip()
-            devices = _sanitized_microphone_devices(settings.get("microphones"))
-            if not microphone_id:
-                preferred_device = _preferred_microphone_device(devices)
-                if preferred_device:
-                    microphone_id = preferred_device["id"]
-                    self._status = f"Microphone pinned to {preferred_device['name']}."
-                else:
-                    self._status = "Microphone setting updated."
-            else:
+        if "stt_enabled" in payload and not isinstance(payload["stt_enabled"], bool):
+            raise ValueError("stt_enabled must be true or false.")
+        with self._settings_lock:
+            settings = self._settings()
+            backend = payload.get("speech_backend")
+            if backend is not None:
+                backend = str(backend).strip()
+                if backend not in SPEECH_BACKENDS:
+                    raise ValueError("Unknown speech backend.")
+                settings["speech_backend"] = backend
+                self._status = f"Voice: {SPEECH_BACKENDS[backend]}"
+            if "stt_enabled" in payload:
+                settings["stt_enabled"] = payload["stt_enabled"]
+                self._status = (
+                    "Dictation hotkey enabled."
+                    if settings["stt_enabled"]
+                    else "Dictation hotkey disabled."
+                )
+            rate_value = payload.get("read_rate", payload.get("readRate"))
+            if rate_value is not None:
+                read_rate = _normalize_read_rate(rate_value)
+                settings["read_rate"] = read_rate
+                self._write_rate_control(read_rate)
+                self._status = f"Read speed: {read_rate} WPM."
+            if "microphone_id" in payload:
+                settings["microphone_id"] = str(payload.get("microphone_id") or "").strip()
                 self._status = "Microphone setting updated."
-            settings["microphone_id"] = microphone_id
-        self._save_settings(settings)
+            self._save_settings(settings)
         return self.state()
 
     def start_native_helper(self) -> dict[str, Any]:
@@ -851,56 +846,64 @@ class ReaderService:
         return {"ok": True, "status": status}
 
     def _clear_native_helper_runtime_status(self, event: str) -> None:
-        settings = self._settings()
-        settings["native_dictation_status_at"] = 0
-        settings["active_microphone_id"] = ""
-        settings["recording"] = False
-        settings["recording_start_pending"] = False
-        settings["audio_level"] = 0
-        settings["audio_peak_level"] = 0
-        settings["last_dictation_event"] = event
-        self._save_settings(settings)
+        with self._settings_lock:
+            settings = self._settings()
+            settings["native_dictation_status_at"] = 0
+            settings["active_microphone_id"] = ""
+            settings["recording"] = False
+            settings["recording_start_pending"] = False
+            settings["recording_finish_pending"] = False
+            settings["transcribing"] = False
+            settings["audio_level"] = 0
+            settings["audio_peak_level"] = 0
+            settings["last_dictation_event"] = event
+            self._save_settings(settings)
 
     def update_native_dictation_status(self, payload: dict[str, Any]) -> dict[str, Any]:
-        settings = self._settings()
-        devices = payload.get("devices")
-        if isinstance(devices, list):
-            sanitized = []
-            for device in devices:
-                if not isinstance(device, dict):
-                    continue
-                device_id = str(device.get("id") or "").strip()
-                name = str(device.get("name") or "").strip()
-                if device_id and name:
-                    sanitized.append({"id": device_id, "name": name})
-            settings["microphones"] = sanitized
-            _pin_preferred_microphone(settings, sanitized)
-        for key in [
-            "microphone_authorization",
-            "input_monitoring_trusted",
-            "accessibility_trusted",
-            "active_microphone_id",
-            "recording",
-            "recording_start_pending",
-            "last_dictation_event",
-            "audio_level",
-            "audio_peak_level",
-            "last_recording_path",
-            "last_recording_bytes",
-            "last_recording_seconds",
-            "last_recording_content_type",
-            "last_recording_peak_level",
-            "last_recording_created_at",
-        ]:
-            if key in payload:
-                settings[key] = payload.get(key)
-        settings["native_dictation_status_at"] = time.time()
-        self._save_settings(settings)
+        with self._settings_lock:
+            settings = self._settings()
+            devices = payload.get("devices")
+            if isinstance(devices, list):
+                sanitized = []
+                for device in devices:
+                    if not isinstance(device, dict):
+                        continue
+                    device_id = str(device.get("id") or "").strip()
+                    name = str(device.get("name") or "").strip()
+                    if device_id and name:
+                        sanitized.append({"id": device_id, "name": name})
+                settings["microphones"] = sanitized
+                _pin_preferred_microphone(settings, sanitized)
+            for key in [
+                "microphone_authorization",
+                "input_monitoring_trusted",
+                "accessibility_trusted",
+                "active_microphone_id",
+                "recording",
+                "recording_finish_pending",
+                "transcribing",
+                "recording_start_pending",
+                "last_dictation_event",
+                "audio_level",
+                "audio_peak_level",
+                "last_recording_path",
+                "last_recording_bytes",
+                "last_recording_seconds",
+                "last_recording_content_type",
+                "last_recording_peak_level",
+                "last_recording_created_at",
+                "last_recording_meter_version",
+                "silent_microphone_ids",
+            ]:
+                if key in payload:
+                    settings[key] = payload.get(key)
+            settings["native_dictation_status_at"] = time.time()
+            self._save_settings(settings)
         if str(payload.get("last_dictation_event") or "") == "native helper started":
             with self._lock:
                 if self._status == "Doc Reader app helper start requested.":
                     self._status = "Doc Reader app helper started."
-        return {"ok": True, "stt": self.stt_status()}
+        return {"ok": True, "stt": self.native_status()["stt"]}
 
     def tts_status(self) -> dict[str, Any]:
         backend = self._speech_backend()
@@ -1013,6 +1016,7 @@ class ReaderService:
             service_label=_stt_service_label(stt_backend),
             language=language,
             word_timestamps=timestamped,
+            retry_without_vad=source is None,
         )
         transcribe_seconds = time.perf_counter() - transcribe_started
         result["normalization"] = normalization
@@ -1038,6 +1042,11 @@ class ReaderService:
                 item, _prepare_audio = self.upsert_library_item(payload)
             else:
                 item = self.add_text(text, label=label or "Dictation", kind="dictation")
+            if result.get("requires_review"):
+                item.source_meta = dict(item.source_meta or {})
+                item.source_meta["transcription_requires_review"] = True
+                with self._lock:
+                    self._upsert_item(item)
             if timestamped and plain_text:
                 item.word_count = _word_count(plain_text)
                 item.updated_at = time.time()
@@ -1056,7 +1065,9 @@ class ReaderService:
         )
         with self._lock:
             self._status = (
-                f"{status_label or 'Dictation'} transcribed in {total_seconds:.1f}s."
+                ("Review the recovered transcript in Dictations before using it."
+                 if result.get("requires_review")
+                 else f"{status_label or 'Dictation'} transcribed in {total_seconds:.1f}s.")
                 if text
                 else f"{status_label or 'Dictation'} produced no text."
             )
@@ -1064,6 +1075,7 @@ class ReaderService:
             "ok": True,
             "text": text,
             "plain_text": plain_text,
+            "requires_review": bool(result.get("requires_review")),
             "item": item_payload,
             "transcription": result,
             "state": self.state(),
@@ -1519,9 +1531,10 @@ class ReaderService:
         return payload if isinstance(payload, dict) else {}
 
     def _save_settings(self, settings: dict[str, Any]) -> None:
-        temp_path = self.settings_path.with_suffix(".tmp")
-        temp_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
-        temp_path.replace(self.settings_path)
+        with self._settings_lock:
+            temp_path = self.settings_path.with_suffix(".tmp")
+            temp_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+            temp_path.replace(self.settings_path)
 
     def _write_rate_control(self, rate: int) -> None:
         read_rate = _normalize_read_rate(rate)
@@ -1818,6 +1831,7 @@ class DocReaderHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         try:
+            validate_browser_write(self.headers)
             parsed = urlparse(self.path)
             route_path = parsed.path
             if route_path == "/api/text":
@@ -1944,28 +1958,23 @@ class DocReaderHandler(BaseHTTPRequestHandler):
         sys.stderr.write("[doc-reader-web] " + (format % args) + "\n")
 
     def _read_json(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        if length <= 0:
+        raw = read_body(self, limit=MAX_JSON_BYTES)
+        if not raw:
             return {}
-        raw = self.rfile.read(length)
         payload = json.loads(raw.decode("utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("JSON payload must be an object.")
         return payload
 
     def _read_body(self) -> bytes:
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        if length <= 0:
-            return b""
-        return self.rfile.read(length)
+        return read_body(self)
 
     def _read_upload(self) -> tuple[str, bytes, str]:
         content_type = self.headers.get("Content-Type", "")
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        if "multipart/form-data" not in content_type or length <= 0:
+        if "multipart/form-data" not in content_type:
             raise ValueError("Expected a multipart file upload.")
 
-        raw = self.rfile.read(length)
+        raw = read_body(self)
         message = BytesParser(policy=default).parsebytes(
             b"Content-Type: "
             + content_type.encode("utf-8")
@@ -1996,6 +2005,8 @@ class DocReaderHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -2924,7 +2935,7 @@ def _pin_preferred_microphone(
     devices: list[dict[str, str]],
 ) -> dict[str, str] | None:
     microphone_id = str(settings.get("microphone_id") or "").strip()
-    if _microphone_device_by_id(devices, microphone_id):
+    if "microphone_id" in settings:
         return None
     preferred_device = _preferred_microphone_device(devices)
     if preferred_device:
@@ -2937,18 +2948,42 @@ def _microphone_payload(settings: dict[str, Any]) -> dict[str, Any]:
     preferred_device = _preferred_microphone_device(raw_devices)
     configured_id = str(settings.get("microphone_id") or "").strip()
     selected_device = _microphone_device_by_id(raw_devices, configured_id)
-    if selected_device is None and preferred_device is not None:
+    if "microphone_id" not in settings and selected_device is None and preferred_device is not None:
         selected_device = preferred_device
-    selected_id = selected_device["id"] if selected_device is not None else ""
-    status_at = float(settings.get("native_dictation_status_at") or 0.0)
+    selected_id = selected_device["id"] if selected_device is not None else configured_id
+    status_at = _clamped_float(settings.get("native_dictation_status_at"), 0.0, 4_102_444_800.0)
     native_age_seconds = max(0.0, time.time() - status_at) if status_at else None
     native_helper_online = (
         native_age_seconds is not None
         and native_age_seconds <= NATIVE_HELPER_STALE_SECONDS
     )
-    devices = [] if preferred_device is not None else [{"id": "", "name": "System Default"}]
+    devices = [{"id": "", "name": "System Default"}]
     devices.extend(raw_devices)
     selected_name = selected_device["name"] if selected_device is not None else "System Default"
+    if configured_id and selected_device is None:
+        selected_name = "Disconnected microphone"
+        devices.append({"id": configured_id, "name": selected_name})
+    last_event = str(settings.get("last_dictation_event") or "")
+    recording_bytes = max(0, int(_clamped_float(settings.get("last_recording_bytes"), 0.0, 10_000_000_000.0)))
+    recording_peak = _clamped_float(settings.get("last_recording_peak_level"), 0.0, 1.0)
+    raw_silent_ids = settings.get("silent_microphone_ids")
+    silent_ids = [
+        str(value).strip()
+        for value in raw_silent_ids
+        if str(value).strip()
+    ] if isinstance(raw_silent_ids, list) else []
+    helper_restarted = last_event.strip().lower() == "native helper started"
+    signal_warning = (
+        not helper_restarted
+        and (
+            "no microphone signal" in last_event.lower()
+            or (
+                recording_bytes > 0
+                and recording_peak <= 0.001
+                and not bool(settings.get("recording"))
+            )
+        )
+    )
     return {
         "selected_id": selected_id,
         "selected_name": selected_name,
@@ -2957,17 +2992,22 @@ def _microphone_payload(settings: dict[str, Any]) -> dict[str, Any]:
         "active_id": str(settings.get("active_microphone_id") or ""),
         "native_helper_online": native_helper_online,
         "native_status_age_seconds": native_age_seconds,
-        "recording": bool(settings.get("recording")),
-        "recording_start_pending": bool(settings.get("recording_start_pending")),
-        "last_event": str(settings.get("last_dictation_event") or ""),
-        "audio_level": _clamped_float(settings.get("audio_level"), 0.0, 1.0),
+        "recording": native_helper_online and bool(settings.get("recording")),
+        "transcribing": native_helper_online and bool(settings.get("transcribing")),
+        "recording_finish_pending": native_helper_online and bool(settings.get("recording_finish_pending")),
+        "recording_start_pending": native_helper_online and bool(settings.get("recording_start_pending")),
+        "last_event": last_event,
+        "audio_level": _clamped_float(settings.get("audio_level"), 0.0, 1.0) if native_helper_online else 0.0,
         "audio_peak_level": _clamped_float(settings.get("audio_peak_level"), 0.0, 1.0),
+        "signal_warning": signal_warning,
+        "silent_input_ids": silent_ids,
         "last_recording": {
             "path": str(settings.get("last_recording_path") or ""),
-            "bytes": max(0, int(_clamped_float(settings.get("last_recording_bytes"), 0.0, 10_000_000_000.0))),
+            "bytes": recording_bytes,
             "seconds": _clamped_float(settings.get("last_recording_seconds"), 0.0, 86_400.0),
             "content_type": str(settings.get("last_recording_content_type") or "audio/mp4"),
-            "peak_level": _clamped_float(settings.get("last_recording_peak_level"), 0.0, 1.0),
+            "peak_level": recording_peak,
+            "level_measured": settings.get("last_recording_meter_version") == 2,
             "created_at": _clamped_float(settings.get("last_recording_created_at"), 0.0, 4_102_444_800.0),
         },
         "devices": devices,
@@ -3242,6 +3282,7 @@ def _transcribe_on_stt_service(
     service_label: str,
     language: str | None = None,
     word_timestamps: bool = False,
+    retry_without_vad: bool = False,
 ) -> dict[str, Any]:
     base_url = base_url.rstrip("/")
     timeout_seconds = max(10, _env_int("DOC_READER_STT_TIMEOUT_SECONDS", 90))
@@ -3254,6 +3295,8 @@ def _transcribe_on_stt_service(
         headers["X-Doc-Reader-Language"] = stt_language
     if word_timestamps:
         headers["X-Doc-Reader-Word-Timestamps"] = "1"
+    if retry_without_vad:
+        headers["X-Doc-Reader-VAD-Retry"] = "1"
     request = urlrequest.Request(
         f"{base_url}/v1/audio/transcriptions",
         data=audio,
@@ -3694,6 +3737,12 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 12px;
       margin-bottom: 5px;
     }
+    input[type="checkbox"]:enabled, .check-row label {
+      cursor: pointer;
+    }
+    button:disabled, input:disabled, select:disabled {
+      cursor: not-allowed;
+    }
     textarea, select {
       width: 100%;
       border: 1px solid var(--line);
@@ -3708,6 +3757,7 @@ INDEX_HTML = r"""<!doctype html>
       resize: vertical;
     }
     select {
+      cursor: pointer;
       min-height: 36px;
       padding: 7px 10px;
     }
@@ -4069,7 +4119,8 @@ INDEX_HTML = r"""<!doctype html>
               <button id="nativeHelperReset" class="service-reset" type="button" title="Restart the native hotkey helper">Reset</button>
             </div>
           </div>
-          <div class="voice-status" id="dictationStatus"></div>
+          <div class="voice-status" id="dictationStatus" role="status"></div>
+          <div class="voice-status" id="dictationHelp"></div>
           <div class="mic-meter" id="dictationMeter" aria-label="Microphone level"><div></div></div>
         </div>
         <div>
@@ -4129,6 +4180,7 @@ INDEX_HTML = r"""<!doctype html>
           </div>
           <input id="librarySearch" class="library-search" type="search" placeholder="Filter library">
           <div class="history" id="library"></div>
+          <button id="libraryMore" type="button" hidden>Show more</button>
         </div>
       </section>
     </div>
@@ -4145,6 +4197,7 @@ INDEX_HTML = r"""<!doctype html>
     };
     const statusEl = document.getElementById("status");
     const libraryEl = document.getElementById("library");
+    const libraryMoreEl = document.getElementById("libraryMore");
     const libraryCountEl = document.getElementById("libraryCount");
     const libraryTitleEl = document.getElementById("libraryTitle");
     const librarySearchEl = document.getElementById("librarySearch");
@@ -4162,6 +4215,7 @@ INDEX_HTML = r"""<!doctype html>
     const readRateValueEl = document.getElementById("readRateValue");
     const dictationEnabledEl = document.getElementById("dictationEnabled");
     const dictationStatusEl = document.getElementById("dictationStatus");
+    const dictationHelpEl = document.getElementById("dictationHelp");
     const dictationMeterEl = document.getElementById("dictationMeter");
     const dictationRecordingDebugEl = document.getElementById("dictationRecordingDebug");
     const dictationRecordingStatusEl = document.getElementById("dictationRecordingStatus");
@@ -4183,6 +4237,9 @@ INDEX_HTML = r"""<!doctype html>
     const topicMapEl = document.getElementById("topicMap");
     state.audioFileAction = "";
     state.nativeHelperAction = "";
+    state.dictationSettingPending = false;
+    state.settingsRevision = 0;
+    state.libraryVisibleCount = 100;
     audioTimestampsEl.checked = localStorage.getItem("docReader.audioTimestamps") === "true";
     state.activeView = localStorage.getItem("docReader.historyView") || "all";
     state.libraryQuery = localStorage.getItem("docReader.libraryQuery") || "";
@@ -4281,6 +4338,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function setActiveView(view) {
+      state.libraryVisibleCount = 100;
       state.activeView = ["readings", "dictations", "clawdad"].includes(view) ? view : "all";
       localStorage.setItem("docReader.historyView", state.activeView);
       renderLibraryFromState();
@@ -4293,7 +4351,7 @@ INDEX_HTML = r"""<!doctype html>
         if (state.activeView === "dictations" && !isDictationItem(item)) return false;
         if (state.activeView === "clawdad" && !isClawdadItem(item)) return false;
         if (!query) return true;
-        return [item.title, item.snippet, item.kind, item.source]
+        return [item.title, item.snippet, item.text, item.kind, item.source]
           .some((value) => String(value || "").toLowerCase().includes(query));
       });
     }
@@ -4302,7 +4360,13 @@ INDEX_HTML = r"""<!doctype html>
       state.libraryRenderDeferred = false;
       const allItems = Array.isArray(items) ? items : [];
       const filtered = filteredLibraryItems(allItems);
+      const renderKey = JSON.stringify([allItems, state.activeView, state.libraryQuery,
+        state.libraryVisibleCount, state.editingItemId, state.editingSavingId]);
+      if (state.libraryRenderKey === renderKey) return;
+      state.libraryRenderKey = renderKey;
       libraryEl.innerHTML = "";
+      libraryMoreEl.hidden = filtered.length <= state.libraryVisibleCount;
+      libraryMoreEl.textContent = `Show more (${Math.max(0, filtered.length - state.libraryVisibleCount)} remaining)`;
       libraryCountEl.textContent = `${countLabel(filtered.length)} / ${allItems.length} total`;
       libraryTitleEl.textContent =
         state.activeView === "readings" ? "Readings" :
@@ -4326,7 +4390,7 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
 
-      for (const item of filtered) {
+      for (const item of filtered.slice(0, state.libraryVisibleCount)) {
         libraryEl.appendChild(makeLibraryCard(item));
       }
     }
@@ -4441,6 +4505,7 @@ INDEX_HTML = r"""<!doctype html>
     function makeDictationCard(item) {
       const card = document.createElement("article");
       card.className = "card";
+      card.dataset.itemId = item.id;
 
       const top = document.createElement("div");
       top.className = "card-top";
@@ -4453,6 +4518,9 @@ INDEX_HTML = r"""<!doctype html>
       meta.className = "meta";
       const wordsLabel = item.word_count ? ` / ${numberLabel(item.word_count)} words` : "";
       meta.textContent = `${isClawdadItem(item) ? "Clawdad dictation" : "Dictation"}${wordsLabel}`;
+      if (item.source_meta?.transcription_requires_review) {
+        meta.textContent += " / Review recovered transcript";
+      }
       info.append(title, meta);
 
       const actions = document.createElement("div");
@@ -4550,10 +4618,15 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function cancelDictationEdit() {
+      if (state.editingSavingId) return;
+      const itemId = state.editingItemId;
       state.editingItemId = "";
       state.editingText = "";
       state.editingSavingId = "";
       renderLibrary((state.data && (state.data.library || state.data.items)) || []);
+      const card = Array.from(libraryEl.querySelectorAll("article"))
+        .find((element) => element.dataset.itemId === itemId);
+      card?.querySelector('button[aria-label="Edit dictation"]')?.focus();
     }
 
     async function saveDictationEdit(item) {
@@ -4649,7 +4722,8 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function renderDictation(stt) {
-      dictationEnabledEl.checked = !!stt.enabled;
+      if (!state.dictationSettingPending) dictationEnabledEl.checked = !!stt.enabled;
+      dictationEnabledEl.disabled = state.dictationSettingPending;
       const service = stt.service || {};
       const backendLabel = stt.backend === "mac-whisper"
         ? "local speech"
@@ -4662,16 +4736,31 @@ INDEX_HTML = r"""<!doctype html>
       const helperLabel = mic.recording
         ? "recording"
         : (
-          mic.recording_start_pending
-            ? "starting recorder"
-            : (state.nativeHelperAction || (mic.native_helper_online ? "helper online" : "helper offline"))
+          mic.recording_finish_pending
+            ? "finishing recording"
+            : (
+              mic.recording_start_pending
+                ? "starting recorder"
+                : (state.nativeHelperAction || (mic.native_helper_online ? "helper online" : "helper offline"))
+            )
         );
-      const inputLabel = mic.input_monitoring_trusted ? "hotkey allowed" : "allow Input Monitoring";
-      dictationStatusEl.textContent = `${stt.label || "Speech-to-text"} / ${serviceLabel} / ${modelLabel} / ${helperLabel} / ${inputLabel}`;
+      const inputLabel = mic.signal_warning
+        ? "check mic signal"
+        : (mic.input_monitoring_trusted ? "hotkey allowed" : "allow Input Monitoring");
+      const activationLabel = stt.enabled ? "Speech-to-text on" : "Speech-to-text off";
+      dictationStatusEl.textContent = `${activationLabel} / ${serviceLabel} / ${modelLabel} / ${helperLabel} / ${inputLabel}`;
+      dictationHelpEl.textContent = !stt.enabled
+        ? "Turn on Speech-to-text to record with Option or transcribe an audio file."
+        : (!mic.native_helper_online
+          ? "Start Helper to record from this Mac. Audio file transcription is available when speech is ready."
+          : (mic.authorization === "denied" || mic.authorization === "restricted"
+            ? "Allow Doc Reader in System Settings > Privacy & Security > Microphone."
+            : (mic.transcribing ? "Transcribing your recording. Esc cancels."
+              : "Tap Option to start and tap again to stop. You can also hold Option while speaking, then release. Esc cancels. Use Start Dictation in the Doc Reader menu for a mouse control.")));
       const level = Math.max(0, Math.min(1, Number(mic.audio_level || 0)));
       const peak = Math.max(0, Math.min(1, Number(mic.audio_peak_level || 0)));
       dictationMeterEl.style.setProperty("--level", String(level));
-      dictationMeterEl.classList.toggle("active", !!mic.recording || !!mic.recording_start_pending);
+      dictationMeterEl.classList.toggle("active", !!mic.recording || !!mic.recording_finish_pending || !!mic.recording_start_pending);
       dictationMeterEl.title = `Mic level ${Math.round(level * 100)}%, peak ${Math.round(peak * 100)}%`;
       renderLastRecording(mic.last_recording || {});
       renderAudioFileStatus(stt);
@@ -4716,8 +4805,11 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       const peak = Math.round(Math.max(0, Math.min(1, Number(recording.peak_level || 0))) * 100);
+      const peakLabel = !recording.level_measured
+        ? "signal level unavailable (older recording)"
+        : (peak <= 0 ? "no mic signal" : `peak ${peak}%`);
       dictationRecordingStatusEl.textContent =
-        `${byteLabel(recording.bytes)} / ${timeLabel(recording.seconds)} / peak ${peak}%`;
+        `${byteLabel(recording.bytes)} / ${timeLabel(recording.seconds)} / ${peakLabel}`;
       if (dictationRecordingAudioEl.dataset.path !== recording.path) {
         dictationRecordingAudioEl.src = `/api/dictation/last-recording?t=${encodeURIComponent(String(recording.created_at || Date.now()))}`;
         dictationRecordingAudioEl.dataset.path = recording.path;
@@ -4743,14 +4835,21 @@ INDEX_HTML = r"""<!doctype html>
       const accessibility = mic.accessibility_trusted ? "paste allowed" : "allow Accessibility";
       const helper = mic.native_helper_online ? "native helper online" : "native helper offline";
       const lastEvent = mic.last_event ? ` / ${mic.last_event}` : "";
-      microphoneStatusEl.textContent = `${selected} / ${permission} / ${accessibility} / ${helper}${lastEvent}`;
+      const signal = mic.signal_warning ? " / no mic signal" : "";
+      microphoneStatusEl.textContent = `${selected} / ${permission} / ${accessibility} / ${helper}${signal}${lastEvent}`;
     }
 
     async function refresh() {
+      if (state.refreshPending || state.dictationSettingPending) return;
+      state.refreshPending = true;
+      const revision = state.settingsRevision;
       try {
-        render(await api("/api/state"));
+        const data = await api("/api/state");
+        if (!state.dictationSettingPending && revision === state.settingsRevision) render(data);
       } catch (error) {
         errorEl.textContent = error.message;
+      } finally {
+        state.refreshPending = false;
       }
     }
 
@@ -4873,15 +4972,25 @@ INDEX_HTML = r"""<!doctype html>
     readRateEl.addEventListener("change", saveReadRate);
 
     dictationEnabledEl.addEventListener("change", async () => {
+      const enabled = dictationEnabledEl.checked;
+      state.settingsRevision += 1;
+      state.dictationSettingPending = true;
+      dictationEnabledEl.disabled = true;
       try {
         errorEl.textContent = "";
-        render(await api("/api/settings", {
+        const data = await api("/api/settings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ stt_enabled: dictationEnabledEl.checked })
-        }));
+          body: JSON.stringify({ stt_enabled: enabled })
+        });
+        state.dictationSettingPending = false;
+        render(data);
       } catch (error) {
         errorEl.textContent = error.message;
+        dictationEnabledEl.checked = !!state.data?.stt?.enabled;
+      } finally {
+        state.dictationSettingPending = false;
+        dictationEnabledEl.disabled = false;
       }
     });
 
@@ -4957,9 +5066,15 @@ INDEX_HTML = r"""<!doctype html>
     showDictationsBtn.addEventListener("click", () => setActiveView("dictations"));
     showClawdadBtn.addEventListener("click", () => setActiveView("clawdad"));
     librarySearchEl.addEventListener("input", () => {
+      state.libraryVisibleCount = 100;
       state.libraryQuery = librarySearchEl.value;
       localStorage.setItem("docReader.libraryQuery", state.libraryQuery);
       renderLibrary((state.data && (state.data.library || state.data.items)) || []);
+    });
+
+    libraryMoreEl.addEventListener("click", () => {
+      state.libraryVisibleCount += 100;
+      renderLibraryFromState();
     });
 
     libraryEl.addEventListener("pointerdown", (event) => {
