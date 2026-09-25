@@ -29,6 +29,9 @@ jobs:
         env:
           DOC_READER_CODESIGN_IDENTITY: '-'
         run: ./build-macos-app "$RUNNER_TEMP/doc-reader-build"
+      - name: Install FFmpeg for native capture test
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
       - name: Test native macOS capture
         if: runner.os == 'macOS'
         run: bash tests/run-native-tests
