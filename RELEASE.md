@@ -1,5 +1,28 @@
 # Release Checklist
 
+## 0.5.0
+
+`0.5.0` adds Windows installation, a tray helper, local Kokoro and Whisper setup,
+configurable hotkeys, a microphone level display, and recovery after sleep or a
+silent input stream. Aaron Tate authored the initial Windows implementation;
+the integrated release adds process ownership checks, clipboard and input
+safeguards, cross-platform settings validation, and automated Windows coverage.
+
+On macOS, Option can start and stop dictation with a tap or a hold. Recording
+finalization and cancellation are tracked explicitly, silent captures are
+reported, and a bounded Whisper retry can save credible text for review without
+inserting uncertain text into the focused app. Right Command readback now uses
+fresh Accessibility or app-owned selection copying, including Codex's fullscreen
+Terminal view where the latter is available. The native helper restores the
+previous clipboard and avoids reading stale text. The release also includes
+Pocket and Kitten speech models as optional local engines, the refreshed web
+workspace, and bounded library rendering.
+
+Automated tests cover the Mac helper, web app, Windows process and recorder
+behavior, and packaging. Windows hardware and audio acceptance still requires
+testing on a Windows machine; Codex selection readback has provisional hands-on
+confirmation on the Mac used for development.
+
 ## 0.4.1
 
 `0.4.1` makes the shipped npm app Mac-local first. App playback defaults to Mac
@@ -120,8 +143,11 @@ Before publishing:
 
 ```bash
 node --check bin/read-docs.js
+node --test tests/process-targets.test.js
 bash -n build-macos-app enable-startup disable-startup install-context-menu-service uninstall-context-menu-service run-doc-reader read-selection-service.sh
 PYTHONPYCACHEPREFIX=/tmp/doc-reader-pyc .venv/bin/python -m compileall doc_reader
+PYTHONPYCACHEPREFIX=/tmp/doc-reader-pyc .venv/bin/python -m unittest discover -s tests -q
+bash tests/run-native-tests
 ./build-macos-app /tmp/doc-reader-native-build
 npm pack --dry-run --json
 ```

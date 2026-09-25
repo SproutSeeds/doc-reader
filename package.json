@@ -1,6 +1,6 @@
 {
   "name": "read-docs",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Local-first speech workspace for document reading, dictation, and library analysis on macOS and Windows.",
   "license": "MIT",
   "type": "module",
@@ -13,6 +13,7 @@
     "build-macos-app",
     "doc_reader/",
     "docs/readme-animation.svg",
+    "docs/local-speech-models.md",
     "macos/",
     "ops/tailnet-app/",
     "vendor/tailnet-app/",
@@ -22,6 +23,7 @@
     "install-context-menu-service",
     "read-selection-service.sh",
     "requirements.txt",
+    "requirements-local-speech.txt",
     "run-doc-reader",
     "uninstall-context-menu-service",
     "run-doc-reader.ps1",
