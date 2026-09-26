@@ -1,5 +1,12 @@
 # Release Checklist
 
+## 0.5.1
+
+`0.5.1` updates the Windows quick start to use the published npm package and
+removes the outdated source-only release notice. It also documents the browser
+passkey flow for maintainers publishing from an interactive terminal. Runtime
+behavior is unchanged from 0.5.0.
+
 ## 0.5.0
 
 `0.5.0` adds Windows installation, a tray helper, local Kokoro and Whisper setup,
@@ -185,6 +192,11 @@ Publish:
 npm publish
 npm view read-docs version
 ```
+
+Run `npm publish` in an interactive terminal so npm can open its browser
+authentication flow. For a passkey-protected account, choose **Use security key**
+and complete the prompt with the existing saved passkey. A non-interactive run
+can report a generic one-time-password error without offering the browser flow.
 
 Upgrade path for existing users:
 

@@ -45,8 +45,8 @@ Maintained by SproutSeeds. Research stewardship: Fractal Research Group ([frg.ea
 
 ## Quick start: Windows
 
-Windows support is available from this source checkout. The published npm 0.4.1
-package predates this contribution; these commands will ship in a later release.
+Windows support is included in the published `read-docs` npm package starting
+with version 0.5.0, and is also available from this source checkout.
 Aaron tested his original implementation on Windows 11 with an RTX 3080.
 Automated checks cover platform logic and macOS compilation; physical microphone,
 keyboard, clipboard insertion, and sleep/wake checks remain part of release testing.
@@ -62,7 +62,14 @@ winget install Gyan.FFmpeg           # audio playback (ffplay) and dictation aud
 winget install eSpeak-NG.eSpeak-NG   # optional: Kokoro bundles its own espeak-ng
 ```
 
-Clone this repository, then from the checkout folder:
+With Node.js and npm installed, install the published package:
+
+```powershell
+npm install -g read-docs@latest
+read-docs start
+```
+
+For a source checkout, clone this repository and run from the checkout folder:
 
 ```powershell
 git clone https://github.com/SproutSeeds/doc-reader.git
