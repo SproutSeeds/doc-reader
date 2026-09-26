@@ -502,8 +502,10 @@ as a fallback.
 In Codex CLI's fullscreen view inside Terminal.app, drag to highlight text and
 tap right Command as usual. Doc Reader reads native accessible selections first;
 for Terminal's app-owned selection it performs the right-click copy automatically
-at the recorded selection point. No manual copying or Codex display-mode change
-is needed. The shortcut waits for modifier release, accepts only freshly copied
+at the recorded selection point. Scrolling during a drag or after highlighting
+keeps the selection tracked within the same Terminal window, including passages
+that span multiple screens. No manual copying or Codex display-mode change is
+needed. The shortcut waits for modifier release, accepts only freshly copied
 text, and preserves the previous clipboard. If the selection changes or disappears,
 highlight it again before reading; an empty copy never falls back to older clipboard
 text. Capture and submission outcomes are logged without the selected text in

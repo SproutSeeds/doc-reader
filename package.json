@@ -1,6 +1,6 @@
 {
   "name": "read-docs",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Local-first speech workspace for document reading, dictation, and library analysis on macOS and Windows.",
   "license": "MIT",
   "type": "module",

@@ -100,10 +100,15 @@ final class SelectedTextReader {
     private var mouseDown: (point: CGPoint, window: SelectionWindow, clicks: Int)?
     private var mouseDragged = false
     private var lastDragPoint: CGPoint?
-    private var anchor: TerminalSelectionAnchor?
-    private var inputRevision = 0
+    private(set) var anchor: TerminalSelectionAnchor?
+    private(set) var inputRevision = 0
     private var expectedCopyKeyUntil = Date.distantPast
     private var expectedRightClick: (point: CGPoint, until: Date)?
+    private let windowAtPoint: (CGPoint, pid_t) -> SelectionWindow?
+
+    init(windowAtPoint: @escaping (CGPoint, pid_t) -> SelectionWindow? = SelectedTextReader.window) {
+        self.windowAtPoint = windowAtPoint
+    }
 
     static func isOwnEvent(_ event: NSEvent) -> Bool {
         event.cgEvent?.getIntegerValueField(.eventSourceUserData) == eventMarker
@@ -151,7 +156,7 @@ final class SelectedTextReader {
     func noteNonReadbackKey(_ event: NSEvent) {
         // Codex's fullscreen transcript can deliver non-copy key events while
         // keeping its own selection visible. Cancel an active copy, but retain
-        // the last mouse selection until a new mouse action or Escape removes it.
+        // the last mouse selection until a new click or Escape removes it.
         inputRevision += 1
         if event.keyCode == 53 { invalidate(reason: "escape") }
     }
@@ -164,15 +169,24 @@ final class SelectedTextReader {
             invalidate(reason: "frontmost-app-or-point")
             return
         }
-        switch event.type {
+        observeTerminalMouse(type: event.type, point: point,
+                             clickCount: event.type == .leftMouseDown ? event.clickCount : 1,
+                             ownerPID: app.processIdentifier)
+    }
+
+    // Separate event decoding from selection tracking so complete gestures,
+    // including scrolling during a drag, can be checked without sending input.
+    func observeTerminalMouse(type: NSEvent.EventType, point: CGPoint, clickCount: Int = 1,
+                              ownerPID: pid_t, now: Date = Date()) {
+        switch type {
         case .leftMouseDown:
             invalidate(reason: "new-mouse-selection")
-            guard let window = Self.window(at: point, ownerPID: app.processIdentifier) else {
+            guard let window = windowAtPoint(point, ownerPID) else {
                 onDiagnostic?("terminal-mouse down ignored reason=no-terminal-window")
                 return
             }
-            mouseDown = (point, window, event.clickCount)
-            onDiagnostic?("terminal-mouse down window=\(window.id) clicks=\(event.clickCount)")
+            mouseDown = (point, window, clickCount)
+            onDiagnostic?("terminal-mouse down window=\(window.id) clicks=\(clickCount)")
         case .leftMouseDragged:
             guard let mouseDown else { return }
             if hypot(point.x - mouseDown.point.x, point.y - mouseDown.point.y) >= 3 {
@@ -191,19 +205,39 @@ final class SelectedTextReader {
             // the ensuing fresh copy determines whether text is selected.
             let candidates = [point, lastDragPoint, down.point].compactMap { $0 }
             guard let textPoint = candidates.first(where: {
-                Self.window(at: $0, ownerPID: app.processIdentifier) == down.window
+                windowAtPoint($0, ownerPID) == down.window
             }) else {
                 onDiagnostic?("terminal-selection missed reason=no-terminal-window-point window=\(down.window.id)")
                 invalidate(reason: "no-terminal-window-point")
                 return
             }
-            anchor = TerminalSelectionAnchor(window: down.window, point: textPoint, createdAt: Date())
+            anchor = TerminalSelectionAnchor(window: down.window, point: textPoint, createdAt: now)
             mouseDown = nil
             mouseDragged = false
             lastDragPoint = nil
             onDiagnostic?("terminal-selection tracked window=\(down.window.id)")
+        case .scrollWheel:
+            // Scrolling can extend a drag or move a selected transcript through
+            // the viewport without clearing the app-owned selection. Cancel an
+            // in-flight copy, but preserve that gesture in its original window.
+            inputRevision += 1
+            guard let selectionWindow = mouseDown?.window ?? anchor?.window else { return }
+            guard windowAtPoint(point, ownerPID) == selectionWindow else {
+                invalidate(reason: "scroll-window-changed")
+                return
+            }
+            if let anchor {
+                guard anchor.isUsable(bundleID: "com.apple.Terminal", window: selectionWindow, now: now) else {
+                    invalidate(reason: "scroll-selection-expired")
+                    return
+                }
+                // Keep the click in the original text area, even if the pointer
+                // is now over another pane. Only a fresh copy can supply text.
+                self.anchor = TerminalSelectionAnchor(window: anchor.window, point: anchor.point, createdAt: now)
+                onDiagnostic?("terminal-selection retained reason=scroll window=\(selectionWindow.id)")
+            }
         default:
-            invalidate(reason: "mouse-\(event.type.rawValue)")
+            invalidate(reason: "mouse-\(type.rawValue)")
         }
     }
 
@@ -230,7 +264,7 @@ final class SelectedTextReader {
             }
             let usableAnchor = selectedAnchor.flatMap { candidate in
                 candidate.isUsable(bundleID: app.bundleIdentifier,
-                                   window: Self.window(at: candidate.point, ownerPID: app.processIdentifier),
+                                   window: self.windowAtPoint(candidate.point, app.processIdentifier),
                                    now: Date())
                     ? candidate : nil
             }

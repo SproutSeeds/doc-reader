@@ -29,6 +29,67 @@ require(!outside.isUsable(bundleID: "com.apple.Terminal", window: window, now: n
         "points outside the recorded window are rejected")
 print("PASS: Terminal selection target, window geometry, and freshness guards")
 
+var currentWindow: SelectionWindow? = window
+let tracker = SelectedTextReader(windowAtPoint: { point, pid in
+    guard let currentWindow, currentWindow.pid == pid, currentWindow.frame.contains(point) else { return nil }
+    return currentWindow
+})
+let start = CGPoint(x: 180, y: 150)
+let end = CGPoint(x: 300, y: 340)
+func mouse(_ type: NSEvent.EventType, at point: CGPoint = end, seconds: TimeInterval = 1) {
+    tracker.observeTerminalMouse(type: type, point: point, ownerPID: window.pid,
+                                 now: now.addingTimeInterval(seconds))
+}
+
+mouse(.scrollWheel)
+require(tracker.anchor == nil, "scrolling alone must not invent a text selection")
+mouse(.leftMouseDown, at: start)
+mouse(.leftMouseDragged)
+mouse(.scrollWheel, seconds: 2)
+mouse(.scrollWheel, seconds: 3)
+mouse(.leftMouseUp, seconds: 4)
+require(tracker.anchor?.point == end, "scrolling while extending a selection must preserve the drag until release")
+let revisionBeforeScroll = tracker.inputRevision
+mouse(.scrollWheel, at: start, seconds: 5)
+require(tracker.anchor?.point == end, "scrolling a completed highlight must keep the copy target in its original text area")
+require(tracker.inputRevision > revisionBeforeScroll, "scrolling still cancels a copy already in flight")
+require(tracker.anchor?.createdAt == now.addingTimeInterval(5), "interaction with a valid selection refreshes its lifetime")
+
+// Continue extending after a scroll and release beyond the window, as when
+// dragging past a viewport edge to select multiple screens of transcript.
+mouse(.leftMouseDown, at: start)
+mouse(.leftMouseDragged)
+mouse(.scrollWheel)
+let lastInsidePoint = CGPoint(x: 300, y: 390)
+mouse(.leftMouseDragged, at: lastInsidePoint)
+mouse(.leftMouseUp, at: CGPoint(x: 300, y: 420))
+require(tracker.anchor?.point == lastInsidePoint, "a long drag released outside the viewport keeps its last in-window target")
+
+currentWindow = SelectionWindow(pid: window.pid, id: 99, frame: window.frame)
+mouse(.scrollWheel)
+require(tracker.anchor == nil, "scrolling another Terminal window must discard the previous target")
+currentWindow = window
+mouse(.leftMouseDown, at: start)
+mouse(.leftMouseDragged)
+currentWindow = SelectionWindow(pid: window.pid, id: window.id, frame: window.frame.offsetBy(dx: 10, dy: 0))
+mouse(.scrollWheel)
+currentWindow = window
+mouse(.leftMouseUp)
+require(tracker.anchor == nil, "a window moved mid-drag must not leave a reusable selection")
+
+mouse(.leftMouseDown, at: start)
+mouse(.leftMouseDragged)
+mouse(.leftMouseUp, seconds: 1)
+mouse(.scrollWheel, seconds: 122)
+require(tracker.anchor == nil, "scrolling must not revive an expired selection")
+mouse(.leftMouseDown, at: start)
+mouse(.leftMouseDragged)
+mouse(.leftMouseUp)
+mouse(.leftMouseDown, at: start)
+mouse(.leftMouseUp, at: start)
+require(tracker.anchor == nil, "a plain click still clears the tracked highlight")
+print("PASS: scroll during and after selection, viewport edges, copy cancellation, and stale-window guards")
+
 let source = CGEventSource(stateID: .privateState)
 if let copy = CGEvent(keyboardEventSource: source, virtualKey: 8, keyDown: true) {
     copy.flags = .maskCommand
@@ -71,6 +132,15 @@ pasteboard.setString("  selected Codex passage\n", forType: .string)
 require(successful.takeCopiedText() == "selected Codex passage", "new copied text is returned")
 require(pasteboard.string(forType: .string) == "original clipboard", "success preserves the preexisting clipboard")
 require(successful.takeCopiedText() == nil, "a completed capture cannot read the restored old clipboard on a second poll")
+
+let largeSelection = (1...2500).map { "Paragraph \($0): selected text, Unicode café, and another line.\n" }.joined()
+let largeCopy = SelectionClipboardTransaction(pasteboard: pasteboard)
+pasteboard.clearContents()
+pasteboard.setString(largeSelection, forType: .string)
+require(largeCopy.takeCopiedText() == largeSelection.trimmingCharacters(in: .whitespacesAndNewlines),
+        "a large multi-paragraph selection is captured completely without a character cutoff")
+require(pasteboard.string(forType: .string) == "original clipboard", "large copies still restore the previous clipboard")
+print("PASS: complete large selection capture (\(largeSelection.count) characters)")
 
 let interrupted = SelectionClipboardTransaction(pasteboard: pasteboard)
 pasteboard.clearContents()

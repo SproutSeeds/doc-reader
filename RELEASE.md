@@ -1,5 +1,16 @@
 # Release Checklist
 
+## 0.5.2
+
+`0.5.2` keeps Terminal selection tracking intact when scrolling during a drag or
+after highlighting text, so multi-screen Codex transcript selections can reach
+the existing readback copy flow. Scrolling in another window, moving the window,
+an expired selection, or a new click still invalidates the target. Scrolling
+during an active copy cancels that copy while preserving a valid highlight for
+the next readback attempt. Clipboard ownership and fresh-copy checks remain in
+place. Native regression tests cover these gestures and complete capture of a
+156,393-character selection.
+
 ## 0.5.1
 
 `0.5.1` updates the Windows quick start to use the published npm package and
