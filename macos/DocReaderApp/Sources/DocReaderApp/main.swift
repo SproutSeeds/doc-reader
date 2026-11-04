@@ -2609,8 +2609,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     }
 
     private func audioCaptureDevices() -> [AVCaptureDevice] {
-        AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.microphone],
+        let deviceType: AVCaptureDevice.DeviceType
+        if #available(macOS 14.0, *) { deviceType = .microphone }
+        else { deviceType = .builtInMicrophone }
+        return AVCaptureDevice.DiscoverySession(
+            deviceTypes: [deviceType],
             mediaType: .audio,
             position: .unspecified
         ).devices
