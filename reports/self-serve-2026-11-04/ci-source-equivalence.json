@@ -1,0 +1,10 @@
+{
+  "status": "PASS",
+  "release_source": "eca0d5970609d23dc8864a7761cda8cd0122bc00",
+  "test_source": "4eda3395c1907b0a7ea179455f7a6d8b594a2bc1",
+  "changed_paths": [
+    ".github/workflows/test.yml"
+  ],
+  "application_and_test_source_unchanged": true,
+  "reason": "Use the packaging Mac runner after the floating latest pool failed to allocate a runner."
+}

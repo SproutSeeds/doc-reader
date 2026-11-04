@@ -1,0 +1,21 @@
+{
+  "status": "PASS",
+  "url": "https://frg.earth/read-docs",
+  "version": "0.7.1",
+  "deployment": "dpl_41mYymcfYmrPLGYWMPNyQyr9M3gj",
+  "share_title": "Read Docs",
+  "share_description": "",
+  "share_image_sha256": "ff5c81654abc97e835af54a2439aae120f1cd633b5010495eeb96edaccc9a3cc",
+  "crawler_user_agents": [
+    "facebookexternalhit/1.1",
+    "Twitterbot/1.0",
+    "Slackbot-LinkExpanding 1.0",
+    "WhatsApp/2.23"
+  ],
+  "browser_viewports": 8,
+  "site_tests": 382,
+  "unrelated_local_files_preserved": 984,
+  "unrelated_public_routes_preserved": true,
+  "public_resume_preserved": true,
+  "client_preview_cache_and_layout": "client-controlled"
+}

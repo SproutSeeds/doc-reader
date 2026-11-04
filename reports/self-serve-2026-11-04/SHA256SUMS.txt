@@ -1,0 +1,3 @@
+bd8995bfa6557a22191f82e21e236c7c30c936d9005a086f8e0f39682e2cfe94  Doc-Reader-0.7.1-macOS-Apple-Silicon.dmg
+71d765b360c5f9afe5622be3ebe60dae2dbd1fc9b428043fa32b33da944be6dc  Doc-Reader-0.7.1-macOS-Intel.dmg
+bb1984f855b4d5744eb034b63a5e3944bad50a3f220362006516a8986640a85f  Doc-Reader-0.7.1-Windows-x64-Setup.exe

@@ -1,0 +1,23 @@
+{
+  "status": "PASS",
+  "release_id": 434096335,
+  "tag_name": "v0.7.1",
+  "source_commit": "eca0d5970609d23dc8864a7761cda8cd0122bc00",
+  "assets": [
+    {
+      "name": "Doc-Reader-0.7.1-macOS-Apple-Silicon.dmg",
+      "bytes": 908823086,
+      "sha256": "bd8995bfa6557a22191f82e21e236c7c30c936d9005a086f8e0f39682e2cfe94"
+    },
+    {
+      "name": "Doc-Reader-0.7.1-macOS-Intel.dmg",
+      "bytes": 1027710839,
+      "sha256": "71d765b360c5f9afe5622be3ebe60dae2dbd1fc9b428043fa32b33da944be6dc"
+    },
+    {
+      "name": "Doc-Reader-0.7.1-Windows-x64-Setup.exe",
+      "bytes": 1337352393,
+      "sha256": "bb1984f855b4d5744eb034b63a5e3944bad50a3f220362006516a8986640a85f"
+    }
+  ]
+}

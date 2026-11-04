@@ -1,0 +1,5 @@
+build (windows-latest, Windows-x64)	Build and verify bundled runtime	2026-11-04T14:54:25.0872313Z PASS: bundled imports, FFmpeg, eSpeak, isolated web and speech health
+build (windows-latest, Windows-x64)	Verify actual Kokoro and Whisper audio	2026-11-04T14:54:32.5759861Z PASS: explicit setup prepares bundled models with background warmup disabled
+build (windows-latest, Windows-x64)	Verify actual Kokoro and Whisper audio	2026-11-04T14:54:37.1053996Z PASS: actual Kokoro synthesis and Whisper transcription
+build (windows-latest, Windows-x64)	Verify packaged Windows app window	2026-11-04T14:54:50.1299682Z PASS: packaged Qt WebEngine renders the Read Docs setup window
+build (windows-latest, Windows-x64)	Verify Windows installer on a clean profile	2026-11-04T14:59:35.6718172Z PASS: bundled imports, FFmpeg, eSpeak, isolated web and speech health

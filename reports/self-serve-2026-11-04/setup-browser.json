@@ -1,0 +1,9 @@
+{
+  "checks": [
+    "macos: automatic speech preparation, failed-start recovery, permission/device help, selected-key instructions, preserved choices, recommended keys, try-it confirmation, Escape/Back/focus, resume, completion, 3 responsive views and accessibility",
+    "windows: automatic speech preparation, failed-start recovery, permission/device help, selected-key instructions, preserved choices, recommended keys, try-it confirmation, Escape/Back/focus, resume, completion, 3 responsive views and accessibility"
+  ],
+  "faults": [],
+  "permissions": "simulated",
+  "audio": "synthetic silent sample; no physical acceptance claimed"
+}

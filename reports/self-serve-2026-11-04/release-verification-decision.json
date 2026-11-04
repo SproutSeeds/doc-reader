@@ -1,0 +1,15 @@
+{
+  "status": "RELEASE_WITH_HOSTED_MAC_UNAVAILABLE",
+  "hosted_test_suite": "failure",
+  "hosted_windows_tests": "success",
+  "hosted_mac_test_steps_executed": 0,
+  "cause": "GitHub could not allocate a hosted Mac runner; no Mac test step executed.",
+  "release_basis": [
+    "100 local Mac Python tests, four platform skips",
+    "local native capture/readback/import regressions and WKWebView check",
+    "successful Apple silicon, Intel Mac and Windows packaging CI",
+    "actual bundled offline speech on all three targets",
+    "both signed Mac DMGs pass source/model hashes and runtime checks"
+  ],
+  "limit": "Supplementary hosted Mac unit/native test job remains unexecuted. No application test failure is waived."
+}
