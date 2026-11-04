@@ -11,3 +11,7 @@ swiftc -swift-version 5 \
   "$ROOT/macos/DocReaderApp/Sources/DocReaderApp/SelectedTextReader.swift" \
   "$ROOT/tests/native-readback/main.swift" -o "$TEST_DIR/readback-tests"
 "$TEST_DIR/readback-tests"
+swiftc -swift-version 5 \
+  "$ROOT/macos/DocReaderApp/Sources/DocReaderApp/DesktopRuntime.swift" \
+  "$ROOT/tests/native-runtime/main.swift" -o "$TEST_DIR/runtime-tests"
+"$TEST_DIR/runtime-tests" "${DOC_READER_TEST_PYTHON:-$(command -v python3)}" "$ROOT"

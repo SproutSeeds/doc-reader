@@ -13,6 +13,10 @@ enum DesktopRuntime {
         var env = ProcessInfo.processInfo.environment
         env["DOC_READER_MANAGED_ROOT"] = managedRoot.path
         env["PYTHONDONTWRITEBYTECODE"] = "1"
+        // A previous npm install leaves Python source in the writable profile.
+        // Python -m otherwise searches that current directory before PYTHONPATH,
+        // allowing stale code to shadow the version shipped in the app bundle.
+        env["PYTHONSAFEPATH"] = "1"
         if let python {
             env["PYTHONPATH"] = python.deletingLastPathComponent().deletingLastPathComponent()
                 .appendingPathComponent("lib/python3.11/site-packages").path
