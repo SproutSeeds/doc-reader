@@ -78,6 +78,7 @@
         "doc_reader/**",
         "macos/**",
         "packages/**",
+        "packaging/**",
         "scripts/**",
         "tests/**",
         "test/**",

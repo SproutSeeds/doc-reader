@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from array import array
 import io
+import importlib.util
 import json
 import os
 import platform
@@ -474,11 +475,18 @@ class EngineRegistry:
                 raise RuntimeError(f"Unable to load Whisper STT: {message}") from exc
 
     def _engine_payload(self, engine: str, model: Any | None) -> dict[str, Any]:
+        # The voice catalog deliberately excludes transcription and Chatterbox.
+        # Their lazy loading must not make an installed engine look unavailable.
+        module = {"whisper": "faster_whisper", "chatterbox": "chatterbox"}.get(engine)
+        installed = (
+            importlib.util.find_spec(module) is not None if module else
+            any(item["id"] == engine and item["installed"] for item in catalog(self.enabled_engines)["models"])
+        )
         return {
             "enabled": engine in self.enabled_engines,
             "loaded": model is not None,
             "available": engine in self.enabled_engines and (
-                model is not None or any(item["id"] == engine and item["installed"] for item in catalog(self.enabled_engines)["models"])
+                model is not None or installed
             ),
             "error": self._load_errors.get(engine, ""),
         }

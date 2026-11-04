@@ -143,7 +143,7 @@ def _clear_pid(name: str) -> None:
 def _running_pid(name: str) -> int:
     pid = _read_pid(name)
     # PID files survive reboots; the number alone cannot establish ownership.
-    owned = _find_stray_pids(SERVICES[name]["module"]) if IS_WINDOWS else []
+    owned = _find_stray_pids(SERVICES[name]["module"])
     if pid and pid in owned:
         return pid
     if pid:
@@ -287,7 +287,22 @@ def _find_stray_pids(module: str) -> list[int]:
     servers started by hand or for another folder are left alone.
     """
     if not IS_WINDOWS:
-        return []
+        try:
+            result = subprocess.run(["/bin/ps", "-axo", "pid=,command="], capture_output=True, text=True, timeout=10, check=True)
+            owned = []
+            for row in result.stdout.splitlines():
+                fields = row.strip().split(None, 1)
+                if len(fields) != 2:
+                    continue
+                # ps does not quote spaces in argv; match the complete fixed
+                # prefix before service options, including the root marker.
+                pid, command = fields
+                prefix = f"{sys.executable} -X {_root_marker()} -m {module}"
+                if pid.isdigit() and int(pid) != os.getpid() and (command == prefix or command.startswith(prefix + " ")):
+                    owned.append(int(pid))
+            return owned
+        except (OSError, subprocess.SubprocessError):
+            return []
     script = (
         "Get-CimInstance Win32_Process | "
         "Where-Object { $_.CommandLine -and $_.Name -match '^python(w)?[.]exe$' } | "

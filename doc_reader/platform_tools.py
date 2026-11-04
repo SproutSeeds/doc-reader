@@ -217,6 +217,16 @@ def _windows_tool_candidates(name: str) -> list[str]:
 
 def find_tool(name: str) -> str:
     """Return an absolute path for a CLI tool, or an empty string."""
+    if name == "ffmpeg":
+        # Desktop installers include the imageio-ffmpeg wheel's native binary.
+        # Prefer that version so a clean machine needs no package manager.
+        try:
+            import imageio_ffmpeg
+            bundled = imageio_ffmpeg.get_ffmpeg_exe()
+            if Path(bundled).is_file():
+                return bundled
+        except (ImportError, RuntimeError):
+            pass
     resolved = shutil.which(name)
     if resolved and Path(resolved).is_file():
         return resolved

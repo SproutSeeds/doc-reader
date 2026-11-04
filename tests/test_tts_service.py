@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import unittest
+from unittest.mock import patch
 
 from doc_reader import tts_service
 
@@ -34,6 +35,18 @@ class FailingPipeline:
 
 
 class TTSServiceTests(unittest.TestCase):
+    def test_installed_whisper_is_available_before_lazy_loading(self) -> None:
+        registry = tts_service.EngineRegistry(enabled_engines={"whisper"}, device="cpu")
+        with patch.object(tts_service.importlib.util, "find_spec", return_value=object()):
+            self.assertEqual(registry._engine_payload("whisper", None), {
+                "enabled": True, "loaded": False, "available": True, "error": "",
+            })
+        with patch.object(tts_service.importlib.util, "find_spec", return_value=None):
+            self.assertFalse(registry._engine_payload("whisper", None)["available"])
+        registry.enabled_engines.clear()
+        with patch.object(tts_service.importlib.util, "find_spec", return_value=object()):
+            self.assertFalse(registry._engine_payload("whisper", None)["available"])
+
     def test_clean_text_replaces_hidden_controls(self) -> None:
         text = "Read\u200bthis\u202e now"
 

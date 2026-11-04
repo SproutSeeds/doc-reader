@@ -524,7 +524,7 @@ private final class ReaderEngine: NSObject {
     }
 
     private var pythonURL: URL {
-        venvURL.appendingPathComponent("bin/python")
+        DesktopRuntime.python ?? venvURL.appendingPathComponent("bin/python")
     }
 
     var serviceInboxURL: URL {
@@ -611,8 +611,8 @@ private final class ReaderEngine: NSObject {
             "--verbose",
         ]
 
-        var environment = ProcessInfo.processInfo.environment
-        environment["PYTHONPATH"] = managedRoot.path
+        var environment = DesktopRuntime.environment(managedRoot: managedRoot)
+        if DesktopRuntime.python == nil { environment["PYTHONPATH"] = managedRoot.path }
 
         if backend == "openai" {
             args.append(contentsOf: ["--openai-model", ReaderPreferences.openAIModel])
@@ -1504,7 +1504,9 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         selectedTextReader.onDiagnostic = { [weak self] message in self?.logDictation(message) }
         selectedTextReader.startMonitoring()
         installCustomDictationMonitors()
-        ensureWebAppRunning()
+        ensureWebAppRunning {
+            if DesktopRuntime.python != nil { NSWorkspace.shared.open(self.webBaseURL) }
+        }
         ensureStartupOrchestration()
         statusTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
             self?.enforceDictationRecordingSafetyLimits()
@@ -1711,6 +1713,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         activeDictationUploadTask?.cancel()
         dictationTranscriptionWatchdog?.cancel()
         fallbackWebProcess?.terminate()
+        if let python = DesktopRuntime.python {
+            _ = runProcess(python.path, ["-m", "doc_reader.desktop_app", "stop"],
+                environment: DesktopRuntime.environment(managedRoot: managedRoot), currentDirectory: managedRoot)
+        }
     }
 
     @objc private func cancelDictationRecording() {
@@ -3174,6 +3180,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     }
 
     private func runReadDocsEnsure() -> Int32 {
+        if let python = DesktopRuntime.python {
+            try? FileManager.default.createDirectory(at: managedRoot, withIntermediateDirectories: true)
+            return runProcess(python.path, ["-m", "doc_reader.desktop_app", "ensure"],
+                environment: DesktopRuntime.environment(managedRoot: managedRoot), currentDirectory: managedRoot)
+        }
         guard let readDocsURL = readDocsCommandURL() else {
             return 1
         }
@@ -3431,6 +3442,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     }
 
     private func kickstartLaunchAgent(label: String) {
+        if DesktopRuntime.python != nil {
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                _ = self?.runReadDocsEnsure()
+            }
+            return
+        }
         let domain = "gui/\(getuid())"
         let target = "\(domain)/\(label)"
         let plistURL = URL(fileURLWithPath: NSHomeDirectory())
@@ -3448,7 +3465,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         if fallbackWebProcess?.isRunning == true {
             return
         }
-        let pythonURL = managedRoot.appendingPathComponent(".venv/bin/python")
+        let pythonURL = DesktopRuntime.python ?? managedRoot.appendingPathComponent(".venv/bin/python")
         guard FileManager.default.isExecutableFile(atPath: pythonURL.path) else {
             return
         }
@@ -3462,8 +3479,8 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             "--port",
             "8766",
         ]
-        var environment = ProcessInfo.processInfo.environment
-        environment["PYTHONPATH"] = managedRoot.path
+        var environment = DesktopRuntime.environment(managedRoot: managedRoot)
+        if DesktopRuntime.python == nil { environment["PYTHONPATH"] = managedRoot.path }
         environment["DOC_READER_MANAGED_ROOT"] = managedRoot.path
         environment["DOC_READER_TTS_UMBRA_URL"] = "http://100.72.151.28:8771"
         environment["DOC_READER_TTS_MAC_URL"] = "http://127.0.0.1:8772"

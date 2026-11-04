@@ -1,6 +1,6 @@
 {
   "name": "read-docs",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Local-first speech workspace for document reading, dictation, and library analysis on macOS and Windows.",
   "license": "MIT",
   "type": "module",
@@ -60,7 +60,7 @@
   "bugs": {
     "url": "https://github.com/SproutSeeds/doc-reader/issues"
   },
-  "homepage": "https://github.com/SproutSeeds/doc-reader#readme",
+  "homepage": "https://frg.earth/read-docs",
   "engines": {
     "node": ">=18"
   },
