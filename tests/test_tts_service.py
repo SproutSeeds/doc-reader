@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -35,6 +37,37 @@ class FailingPipeline:
 
 
 class TTSServiceTests(unittest.TestCase):
+    def test_explicit_setup_prepares_models_when_background_warmup_is_disabled(self) -> None:
+        registry = tts_service.EngineRegistry(enabled_engines={"kokoro", "whisper"}, device="cpu")
+        calls = []
+        ready = threading.Event()
+        with patch.dict(os.environ, {"DOC_READER_KOKORO_PRELOAD":"0", "DOC_READER_STT_PRELOAD":"0"}), \
+             patch.object(registry, "_preload_kokoro", side_effect=lambda: calls.append("kokoro")), \
+             patch.object(registry, "_preload_whisper", side_effect=lambda: (calls.append("whisper"), ready.set())):
+            registry.start_background_preload()
+            self.assertEqual(calls, [])
+            registry.start_background_preload(force=True)
+            self.assertTrue(ready.wait(2), "Explicit setup left dictation unprepared")
+            self.assertEqual(calls, ["kokoro", "whisper"])
+
+    def test_setup_request_during_startup_is_not_lost(self) -> None:
+        registry = tts_service.EngineRegistry(enabled_engines={"kokoro", "whisper"}, device="cpu")
+        started, release, ready = threading.Event(), threading.Event(), threading.Event()
+        def warm_kokoro():
+            started.set()
+            self.assertTrue(release.wait(2))
+        with patch.dict(os.environ, {"DOC_READER_KOKORO_PRELOAD":"1", "DOC_READER_STT_PRELOAD":"0"}), \
+             patch.object(registry, "_preload_kokoro", side_effect=warm_kokoro), \
+             patch.object(registry, "_preload_whisper", side_effect=ready.set):
+            registry.start_background_preload()
+            self.assertTrue(started.wait(2))
+            registry.start_background_preload(force=True)
+            worker = registry._preload_thread
+            release.set()
+            self.assertTrue(ready.wait(2), "Setup request was discarded during active warmup")
+            worker.join(2)
+            self.assertFalse(worker.is_alive())
+
     def test_installed_whisper_is_available_before_lazy_loading(self) -> None:
         registry = tts_service.EngineRegistry(enabled_engines={"whisper"}, device="cpu")
         with patch.object(tts_service.importlib.util, "find_spec", return_value=object()):

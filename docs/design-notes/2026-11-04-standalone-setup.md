@@ -24,3 +24,19 @@ Verification must include real native window launches, isolated keyboard-state
 tests, keyboard/focus and narrow-window UI checks, and offline speech from bundled
 weights. Automated speech and key routing do not establish physical microphone,
 speaker, permission-prompt or Windows-device acceptance.
+
+## Independent first use, November 4
+
+Preserve the centered four-step sequence and serif/system type pairing. Considered
+a persistent help sidebar, a separate troubleshooting screen and contextual
+details within each step. Chosen: a plain-text Need help control within the
+current step, retaining Back and Escape. Show only action-specific help when
+opened. Add microphone selection to Access so a new user can recover without
+leaving setup.
+
+The key diagram and trial instructions follow the actual selections. Only the
+recommended pair is drawn around the spacebar; custom choices appear as two
+separate key groups. Speech preparation starts automatically and an explicit
+retry overrides old background-warmup settings. Mac Accessibility requests
+register the app before opening system settings. The original design and
+minimal copy budget remain in place.

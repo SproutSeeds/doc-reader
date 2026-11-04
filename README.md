@@ -33,9 +33,10 @@ Maintained by SproutSeeds. Research stewardship: Fractal Research Group ([frg.ea
 - Supports pause/resume, active-field dictation insertion, and selectable speech
   backends.
 
-## Desktop downloads (0.7.0 preview)
+## Desktop downloads (0.7.1 preview)
 
 [Download Read Docs for Mac or Windows](https://frg.earth/read-docs).
+[Installation and first-use help](docs/desktop-guide.md).
 Choose Apple silicon, Intel Mac, or Windows x64. Mac users drag the app into
 Applications; Windows users run the installer. Python, speech dependencies,
 FFmpeg and eSpeak are included. Node, npm, a terminal and developer tools are
@@ -63,7 +64,7 @@ microphone, global-shortcut, clipboard-insertion and sleep/wake acceptance.
 ## Source and npm platform support
 
 The published npm package remains the earlier 0.5.2 release. Use the desktop
-download or current source checkout for the 0.7.0 window and setup flow.
+download or current source checkout for the current window and setup flow.
 
 - **macOS**: desktop window, menu-bar app, login agent, Right Command selection
   hotkey, Left Option hold-to-dictate, and the right-click Services item.

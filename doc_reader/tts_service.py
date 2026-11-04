@@ -84,22 +84,33 @@ class EngineRegistry:
         self._whisper_model: Any | None = None
         self._load_errors: dict[str, str] = {}
         self._preload_thread: threading.Thread | None = None
+        self._preload_lock = threading.Lock()
+        self._preload_pending: set[str] = set()
 
-    def start_background_preload(self) -> None:
-        if self._preload_thread is not None and self._preload_thread.is_alive():
-            return
-        preload_kokoro = "kokoro" in self.enabled_engines and _env_flag("DOC_READER_KOKORO_PRELOAD", True)
-        preload_whisper = "whisper" in self.enabled_engines and _env_flag("DOC_READER_STT_PRELOAD", True)
-        if not preload_kokoro and not preload_whisper:
-            return
-        thread = threading.Thread(
-            target=self._preload_models,
-            args=(preload_kokoro, preload_whisper),
-            name="doc-reader-model-preload",
-            daemon=True,
-        )
-        self._preload_thread = thread
-        thread.start()
+    def start_background_preload(self, *, force: bool = False) -> None:
+        # An explicit setup request must work even when background warmup was
+        # disabled in an older installation. Queue it behind any active warmup.
+        requested = {
+            engine for engine, flag in (("kokoro", "DOC_READER_KOKORO_PRELOAD"), ("whisper", "DOC_READER_STT_PRELOAD"))
+            if engine in self.enabled_engines and (force or _env_flag(flag, True))
+        }
+        with self._preload_lock:
+            self._preload_pending.update(requested)
+            if not self._preload_pending or self._preload_thread is not None:
+                return
+            self._preload_thread = threading.Thread(
+                target=self._drain_preload_queue, name="doc-reader-model-preload", daemon=True)
+            self._preload_thread.start()
+
+    def _drain_preload_queue(self) -> None:
+        while True:
+            with self._preload_lock:
+                if not self._preload_pending:
+                    self._preload_thread = None
+                    return
+                requested = self._preload_pending
+                self._preload_pending = set()
+            self._preload_models("kokoro" in requested, "whisper" in requested)
 
     def _preload_models(self, preload_kokoro: bool, preload_whisper: bool) -> None:
         # Kokoro/Torch must claim its cuDNN DLLs before faster-whisper/ctranslate2.
@@ -590,7 +601,7 @@ class TTSHandler(BaseHTTPRequestHandler):
             validate_browser_write(self.headers)
             if self.path == "/v1/prepare":
                 self._read_json()
-                self.registry.start_background_preload()
+                self.registry.start_background_preload(force=True)
                 self._send_json({"ok": True})
                 return
             if self.path == "/v1/audio/speech":

@@ -1649,6 +1649,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
                     }
                 case "accessibility":
+                    self.promptForAccessibilityAccess()
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
                 case "input":
                     CGRequestListenEventAccess()
