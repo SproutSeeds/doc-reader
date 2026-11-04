@@ -116,7 +116,7 @@ if sys.platform != "darwin":
     SPEECH_BACKENDS.pop("macsay", None)
     if "pyttsx3" in SPEECH_BACKENDS:
         SPEECH_BACKENDS["pyttsx3"] = "Windows Voice" if IS_WINDOWS else "System Voice"
-DEFAULT_STT_ENABLED = True
+DEFAULT_STT_ENABLED = False
 STYLE_STOP_WORDS = frozenset(
     {
         "a",
@@ -750,8 +750,15 @@ class ReaderService:
     def update_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
         if "stt_enabled" in payload and not isinstance(payload["stt_enabled"], bool):
             raise ValueError("stt_enabled must be true or false.")
+        if "setup_completed" in payload and not isinstance(payload["setup_completed"], bool):
+            raise ValueError("setup_completed must be true or false.")
+        if "setup_step" in payload and (type(payload["setup_step"]) is not int or payload["setup_step"] not in range(4)):
+            raise ValueError("Unknown setup step.")
         with self._lock:
             settings = self._settings()
+            for field in ("setup_step", "setup_completed"):
+                if field in payload:
+                    settings[field] = payload[field]
             backend = payload.get("speech_backend")
             if backend is not None:
                 backend = str(backend).strip()
@@ -1634,6 +1641,8 @@ class ReaderService:
         )
         return {
             "read_rate": read_rate,
+            "setup_completed": settings.get("setup_completed") is True,
+            "setup_step": settings.get("setup_step", 0),
             "readRate": read_rate,
             "read_speed": _speed_for_rate(read_rate),
             "readSpeed": _speed_for_rate(read_rate),
@@ -2025,6 +2034,16 @@ class DocReaderHandler(BaseHTTPRequestHandler):
 
             if route_path == "/api/stop":
                 self._send_json(self.reader.stop())
+                return
+
+            if route_path == "/api/setup/prepare":
+                self._read_json()
+                base_url = _env("DOC_READER_TTS_MAC_URL", DEFAULT_TTS_MAC_URL).rstrip("/")
+                request = urlrequest.Request(base_url + "/v1/prepare", data=b"{}", headers={"Content-Type": "application/json"}, method="POST")
+                with urlrequest.urlopen(request, timeout=10) as response:
+                    response.read()
+                _service_health_cache_clear()
+                self._send_json({"ok": True})
                 return
 
             if route_path == "/api/settings":
@@ -3217,6 +3236,8 @@ def _service_health_uncached(base_url: str, *, timeout: float | None = None) -> 
             "url": base_url,
             "ms": round((time.perf_counter() - started) * 1000),
             "device": payload.get("device", {}),
+            "bundled_models": bool(payload.get("bundled_models")),
+            "whisper_model": payload.get("whisper_model", ""),
             "engines": payload.get("engines", {}),
         }
     except (OSError, ValueError, urlerror.URLError) as exc:
@@ -4249,6 +4270,7 @@ INDEX_HTML = r"""<!doctype html>
           <audio id="dictationRecordingAudio" controls preload="none"></audio>
         </div>
       </section></details>
+<button id="setupReopen" type="button">Set up Read Docs</button>
 <details class="settings-section" id="shortcutSettings"><summary>Shortcuts</summary>        <div class="hotkeys" id="hotkeys">
           <div class="hotkey-row">
             <div class="hotkey-head"><span class="hotkey-name">Dictation key</span><span class="hotkey-sub" id="dictationGesture">hold to talk</span></div>
@@ -4565,6 +4587,7 @@ INDEX_HTML = r"""<!doctype html>
       statusEl.hidden = !/failed|error|unavailable|unreachable|not reachable|warning|no .*(?:signal|speech)|could not|cannot|loading|downloading|starting|transcribing/i.test(statusEl.textContent);
       statusEl.classList.toggle("bad", /failed|error|unreachable|not reachable/i.test(statusEl.textContent));
       document.body.dataset.state = data.running ? "reading" : (data.paused ? "paused" : "idle");
+      renderSetup(data);
       renderVoice(data.tts || {});
       renderReadRate(data.settings || {});
       renderDictation(data.stt || {});
@@ -5336,7 +5359,12 @@ INDEX_HTML = r"""<!doctype html>
         event.stopPropagation();
         if (event.key === "Escape") { stopHotkeyRecording(); return; }
         if (event.repeat) return;
-        if (isWinKey(event)) { finishHotkeyRecording(kind, "", HOTKEY_MESSAGES.win); return; }
+        if (kind === "selection" && event.code === "MetaRight" && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+          hotkeyUi.pendingModifier = "cmd_r";
+          entry.prompt.textContent = "Release the right key to use it";
+          return;
+        }
+        if (isWinKey(event) || hotkeyUi.pendingModifier === "cmd_r") { finishHotkeyRecording(kind, "", HOTKEY_MESSAGES.win); return; }
         const modifier = CHORD_MODIFIERS[event.code];
         if (kind === "dictation") {
           if (modifier) {
@@ -5362,6 +5390,9 @@ INDEX_HTML = r"""<!doctype html>
       const onKeyUp = (event) => {
         event.preventDefault();
         event.stopPropagation();
+        if (kind === "selection" && event.code === "MetaRight" && hotkeyUi.pendingModifier === "cmd_r") {
+          finishHotkeyRecording(kind, "cmd_r", ""); return;
+        }
         if (kind === "dictation") {
           if (hotkeyUi.pendingModifier && HOTKEY_CODES[event.code] === hotkeyUi.pendingModifier) {
             finishHotkeyRecording(kind, hotkeyUi.pendingModifier, "");
@@ -6095,6 +6126,7 @@ INDEX_HTML = r"""<!doctype html>
       }
     });
 
+    /* READ_DOCS_SETUP_SCRIPT */
     refresh();
     setInterval(refresh, 1500);
   </script>
@@ -6108,6 +6140,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default=os.getenv("DOC_READER_WEB_HOST", DEFAULT_HOST))
     parser.add_argument("--port", type=int, default=int(os.getenv("DOC_READER_WEB_PORT", DEFAULT_PORT)))
     return parser
+
+
+from .onboarding import STYLE as SETUP_STYLE, HTML as SETUP_HTML, SCRIPT as SETUP_SCRIPT
+INDEX_HTML = INDEX_HTML.replace("</style>", SETUP_STYLE + "</style>", 1).replace(
+    '<div class="app-body"', SETUP_HTML + '<div class="app-body"', 1
+).replace("/* READ_DOCS_SETUP_SCRIPT */", SETUP_SCRIPT)
 
 
 def main() -> int:

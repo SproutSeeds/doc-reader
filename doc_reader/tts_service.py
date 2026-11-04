@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from .local_voices import MODELS, POCKET_LANGUAGES, catalog, validate_voice
+from .bundled_models import models_root, model_manifest, whisper_path
 from .http_safety import MAX_JSON_BYTES, read_body, validate_browser_write
 from .platform_tools import configure_espeak, configure_windows_dll_search
 
@@ -82,8 +83,11 @@ class EngineRegistry:
         self._transcription_lock = threading.RLock()
         self._whisper_model: Any | None = None
         self._load_errors: dict[str, str] = {}
+        self._preload_thread: threading.Thread | None = None
 
     def start_background_preload(self) -> None:
+        if self._preload_thread is not None and self._preload_thread.is_alive():
+            return
         preload_kokoro = "kokoro" in self.enabled_engines and _env_flag("DOC_READER_KOKORO_PRELOAD", True)
         preload_whisper = "whisper" in self.enabled_engines and _env_flag("DOC_READER_STT_PRELOAD", True)
         if not preload_kokoro and not preload_whisper:
@@ -94,6 +98,7 @@ class EngineRegistry:
             name="doc-reader-model-preload",
             daemon=True,
         )
+        self._preload_thread = thread
         thread.start()
 
     def _preload_models(self, preload_kokoro: bool, preload_whisper: bool) -> None:
@@ -137,20 +142,21 @@ class EngineRegistry:
             )
 
     def health(self) -> dict[str, Any]:
-        with self._lock:
-            return {
-                "ok": True,
-                "app": "doc-reader-tts",
-                "host": platform.node(),
-                "device": self._device_payload(),
-                "engines": {
-                    "chatterbox": self._engine_payload("chatterbox", self._chatterbox_model),
-                    "kokoro": self._engine_payload("kokoro", self._kokoro_pipeline),
-                    "pocket": self._engine_payload("pocket", self._pocket_model),
-                    "kitten": self._engine_payload("kitten", self._kitten_model),
-                    "whisper": self._engine_payload("whisper", self._whisper_model),
-                },
-            }
+        return {
+            "ok": True,
+            "app": "doc-reader-tts",
+            "bundled_models": bool(models_root()),
+            "whisper_model": model_manifest().get("whisper", {}).get("name", _env("DOC_READER_STT_MODEL", DEFAULT_STT_MODEL)),
+            "host": platform.node(),
+            "device": self._device_payload(),
+            "engines": {
+                "chatterbox": self._engine_payload("chatterbox", self._chatterbox_model),
+                "kokoro": self._engine_payload("kokoro", self._kokoro_pipeline),
+                "pocket": self._engine_payload("pocket", self._pocket_model),
+                "kitten": self._engine_payload("kitten", self._kitten_model),
+                "whisper": self._engine_payload("whisper", self._whisper_model),
+            },
+        }
 
     def synthesize(
         self,
@@ -434,7 +440,22 @@ class EngineRegistry:
                 return self._kokoro_pipelines[language]
             try:
                 configure_espeak()
-                from kokoro import KPipeline
+                from kokoro import KPipeline, KModel
+                configure_espeak()
+
+                root = models_root()
+                if root:
+                    model = getattr(self._kokoro_pipeline, "model", None)
+                    if model is None:
+                        model = KModel(repo_id="hexgrad/Kokoro-82M", config=str(root / "kokoro/config.json"),
+                                       model=str(root / "kokoro/kokoro-v1_0.pth")).to(self.device).eval()
+                    pipeline = KPipeline(lang_code=language, device=self.device, model=model, repo_id="hexgrad/Kokoro-82M")
+                    for voice in (root / "kokoro/voices").glob("*.pt"):
+                        pipeline.voices[voice.stem] = pipeline.load_single_voice(str(voice))
+                    self._kokoro_pipeline = pipeline
+                    self._kokoro_pipelines[language] = pipeline
+                    self._load_errors.pop("kokoro", None)
+                    return pipeline
 
                 try:
                     pipeline = KPipeline(lang_code=language, device=self.device,
@@ -463,7 +484,7 @@ class EngineRegistry:
                     "float16" if self.device == "cuda" else "int8",
                 )
                 self._whisper_model = WhisperModel(
-                    model_name,
+                    whisper_path(model_name),
                     device=self.device,
                     compute_type=compute_type,
                 )
@@ -567,6 +588,11 @@ class TTSHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         try:
             validate_browser_write(self.headers)
+            if self.path == "/v1/prepare":
+                self._read_json()
+                self.registry.start_background_preload()
+                self._send_json({"ok": True})
+                return
             if self.path == "/v1/audio/speech":
                 payload = self._read_json()
                 result = self.registry.synthesize(

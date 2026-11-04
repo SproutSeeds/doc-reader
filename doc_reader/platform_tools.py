@@ -12,16 +12,18 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 IS_WINDOWS = sys.platform == "win32"
 IS_MACOS = sys.platform == "darwin"
 _DLL_DIRECTORY_HANDLES: list[object] = []
+_ESPEAK_TEMP = None
 
 LOCAL_KOKORO_LABEL = "Mac Kokoro" if IS_MACOS else "Local Kokoro"
 LOCAL_STT_LABEL = "Mac speech-to-text" if IS_MACOS else "Local speech-to-text"
-DEFAULT_WINDOWS_DICTATION_KEY = "ctrl_r"
-DEFAULT_WINDOWS_SELECTION_HOTKEY = "<ctrl>+<alt>+r"
+DEFAULT_WINDOWS_DICTATION_KEY = "alt_l"
+DEFAULT_WINDOWS_SELECTION_HOTKEY = "cmd_r"
 
 
 # ------------------------------------------------------------------ hotkey specs
@@ -33,13 +35,14 @@ DEFAULT_WINDOWS_SELECTION_HOTKEY = "<ctrl>+<alt>+r"
 # The Windows helper feeds these to pynput; the macOS helper maps them to
 # NSEvent modifier flags and key codes (Option for alt, Control for ctrl).
 
-DEFAULT_MAC_DICTATION_KEY = "alt"
-DEFAULT_MAC_SELECTION_HOTKEY = "<ctrl>+<alt>+<cmd>+r"
+DEFAULT_MAC_DICTATION_KEY = "alt_l"
+DEFAULT_MAC_SELECTION_HOTKEY = "cmd_r"
 
 # Quick-swap presets offered in the web page and the tray menu.
-DICTATION_KEY_OPTIONS: tuple[str, ...] = ("ctrl_r", "alt_r", "shift_r", "f8", "f9", "scroll_lock", "pause")
-MAC_DICTATION_KEY_OPTIONS: tuple[str, ...] = ("alt", "alt_r", "ctrl", "shift_r", "f8", "f9")
+DICTATION_KEY_OPTIONS: tuple[str, ...] = ("alt_l", "ctrl_r", "alt_r", "shift_r", "f8", "f9", "scroll_lock", "pause")
+MAC_DICTATION_KEY_OPTIONS: tuple[str, ...] = ("alt_l", "alt", "alt_r", "ctrl", "shift_r", "f8", "f9")
 SELECTION_SHORTCUT_OPTIONS: tuple[str, ...] = (
+    "cmd_r",
     "<ctrl>+<alt>+r",
     "<ctrl>+<shift>+r",
     "<ctrl>+<alt>+s",
@@ -92,7 +95,7 @@ def validate_selection_shortcut(value: object) -> tuple[str, str]:
     if not candidate:
         return "", "Press a key combination for reading the selection."
     # Keep the native default available after choosing a custom shortcut.
-    if IS_MACOS and candidate == DEFAULT_MAC_SELECTION_HOTKEY:
+    if candidate == "cmd_r" or (IS_MACOS and candidate == "<ctrl>+<alt>+<cmd>+r"):
         return candidate, ""
     modifiers: list[str] = []
     final = ""
@@ -147,7 +150,7 @@ def _key_word(token: str) -> str:
         "alt": "Option" if IS_MACOS else "Alt",
         "alt_gr": "AltGr",
         "shift": "Shift",
-        "cmd": "Command" if IS_MACOS else "Win",
+        "cmd": "Command" if IS_MACOS else "Windows",
         "space": "Space",
         "scroll_lock": "Scroll Lock",
         "num_lock": "Num Lock",
@@ -181,7 +184,7 @@ def selection_hotkey_label(shortcut: str | None = None) -> str:
 
 def hotkey_options() -> dict[str, list[dict[str, str]]]:
     dictation = MAC_DICTATION_KEY_OPTIONS if IS_MACOS else DICTATION_KEY_OPTIONS
-    selection = (DEFAULT_MAC_SELECTION_HOTKEY, *SELECTION_SHORTCUT_OPTIONS) if IS_MACOS else SELECTION_SHORTCUT_OPTIONS
+    selection = SELECTION_SHORTCUT_OPTIONS
     return {
         "dictation": [{"value": value, "label": dictation_hotkey_label(value)} for value in dictation],
         "selection": [{"value": value, "label": selection_hotkey_label(value)} for value in selection],
@@ -366,7 +369,28 @@ def configure_windows_dll_search() -> None:
 
 
 def configure_espeak() -> None:
-    """Point phonemizer at a system espeak-ng on Windows when the bundled one is missing."""
+    """Resolve eSpeak data before import, including after moving a desktop app."""
+    try:
+        import espeakng_loader
+        global _ESPEAK_TEMP
+        data = Path(espeakng_loader.get_data_path())
+        # This eSpeak build has a short path_home buffer. Long relocated app
+        # paths silently fall back to its build machine. Use private temporary
+        # public phoneme data in that case, retained for this process lifetime.
+        if len(str(data).encode("utf-8")) > 140:
+            if _ESPEAK_TEMP is None:
+                _ESPEAK_TEMP = tempfile.TemporaryDirectory(prefix="rd-espeak-", dir="/tmp" if IS_MACOS else None)
+                shutil.copytree(data, Path(_ESPEAK_TEMP.name) / "espeak-ng-data")
+            data = Path(_ESPEAK_TEMP.name) / "espeak-ng-data"
+        os.environ.setdefault("PHONEMIZER_ESPEAK_LIBRARY", espeakng_loader.get_library_path())
+        os.environ["PHONEMIZER_ESPEAK_DATA_PATH"] = str(data)
+        os.environ["ESPEAK_DATA_PATH"] = str(data)
+        # Reapply after misaki's import-time override as well as before import.
+        from phonemizer.backend.espeak.wrapper import EspeakWrapper
+        EspeakWrapper.set_data_path(str(data))
+        return
+    except ImportError:
+        pass
     if not IS_WINDOWS:
         return
     if os.getenv("PHONEMIZER_ESPEAK_LIBRARY"):

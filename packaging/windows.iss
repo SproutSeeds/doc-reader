@@ -1,12 +1,12 @@
 #ifndef AppVersion
-  #define AppVersion "0.6.2"
+  #define AppVersion "0.7.0"
 #endif
 #ifndef Payload
   #define Payload "..\build\desktop\Doc Reader"
 #endif
 [Setup]
 AppId={{F3C46BAE-5B48-4ED2-9708-DA2DF12E740B}
-AppName=Doc Reader
+AppName=Read Docs
 AppVersion={#AppVersion}
 AppPublisher=FRG
 AppPublisherURL=https://frg.earth/read-docs
@@ -34,6 +34,6 @@ Name: "{autodesktop}\Doc Reader"; Filename: "{app}\DocReader.exe"; Tasks: deskto
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 [Run]
-Filename: "{app}\DocReader.exe"; Description: "Open Doc Reader"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\DocReader.exe"; Description: "Open Read Docs"; Flags: nowait postinstall skipifsilent
 [UninstallRun]
 Filename: "{app}\DocReader.exe"; Parameters: "--stop"; Flags: runhidden waituntilterminated

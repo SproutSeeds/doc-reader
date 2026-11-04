@@ -54,6 +54,7 @@ def main() -> None:
     for name in ("doc_reader", "assets"):
         shutil.copytree(ROOT / name, site / name, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copy2(ROOT / "package.json", site / "package.json")
+    run(python, ROOT / "packaging/bundle_models.py", payload / "models")
     shutil.copy2(ROOT / "LICENSE", payload / "LICENSE.txt")
     shutil.copy2(ROOT / "packaging/THIRD_PARTY.md", payload / "THIRD_PARTY.txt")
     shutil.copytree(ROOT / "packaging/licenses", payload / "licenses", dirs_exist_ok=True)

@@ -1,5 +1,32 @@
 # Release Checklist
 
+## 0.7.0 standalone desktop preview
+
+The shared workspace opens inside WKWebView on macOS and Qt WebEngine on Windows.
+Launch, reopen and tray/menu commands raise the desktop window. The four-step
+first-run sequence covers offline speech readiness, OS permissions, customizable
+shortcuts and an explicit user test. Setup progress and existing choices survive
+restarts. Fresh installations keep dictation off until enabled.
+
+Recommended keys are Left Option/Alt for dictation and Right Command/Windows for
+a bare-tap selection read. Windows reserves the right key without opening Start;
+chords replay matched modifier events. Windows selection capture fails closed
+instead of reading an old clipboard. Mac Command-L retains its ordinary behavior
+with the new default. Existing selected-text freshness safeguards are retained.
+
+Installers include pinned Kokoro weights, 28 English voice packs, multilingual
+Whisper and license/attribution files. `packaging/bundle_models.py` records their
+revisions and checksums. CI speech runs with an empty cache and Hugging Face /
+Transformers offline flags. Long relocated eSpeak paths use a process-private
+short phoneme-data directory to avoid the library's path-length limit.
+
+Run the Python suite, native capture/readback tests, the native WebKit window
+harness, workspace and setup browser harnesses, and the packaged Windows window
+smoke. Browser setup permissions and speech samples are simulated; manual audio,
+permission prompts and global key behavior on physical Windows hardware remain
+separate acceptance checks. Sign/notarize Mac installers and clearly label the
+unsigned Windows preview before changing the public download manifest.
+
 ## 0.6.2 desktop preview
 
 Refines the shared Read Docs workspace around a centered reading canvas and a

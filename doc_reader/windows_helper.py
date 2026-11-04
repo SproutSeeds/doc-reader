@@ -20,7 +20,6 @@ import sys
 import threading
 import time
 import wave
-import webbrowser
 from pathlib import Path
 from typing import Any
 from urllib import error as urlerror
@@ -664,6 +663,7 @@ def main() -> int:
     except (OSError, ValueError):
         existing = 0
     if existing and existing != os.getpid() and pid_is_running(existing):
+        (root / "show-workspace").write_text(str(time.time_ns()), encoding="utf-8")
         print(f"[doc-reader] Windows helper already running (pid {existing}).")
         return 0
     pid_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
@@ -671,6 +671,8 @@ def main() -> int:
     sys.stdout = _TimestampedLog(sys.stdout)
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    from .workspace_window import WorkspaceWindow
+    workspace = WorkspaceWindow(WEB_URL)
     power_events: list[str] = []
     try:
         from PySide6.QtCore import QAbstractNativeEventFilter
@@ -711,7 +713,8 @@ def main() -> int:
         pass
     if not QSystemTrayIcon.isSystemTrayAvailable():
         print("[doc-reader] System tray is not available.")
-        return 1
+        app.setQuitOnLastWindowClosed(True)
+        workspace.present()
 
     class Bridge(QObject):
         selectionRequested = Signal()
@@ -731,7 +734,7 @@ def main() -> int:
     prearm = os.getenv("DOC_READER_DICTATION_PREARM", "1").strip().lower() not in {"0", "false", "no", "off"}
     recorder = Recorder(prearm=prearm)
     state: dict[str, Any] = {
-        "stt_enabled": True,
+        "stt_enabled": False,
         "selected_microphone_id": "",
         "running": False,
         "paused": False,
@@ -881,7 +884,8 @@ def main() -> int:
         threading.Thread(target=worker, name="doc-reader-ensure-web", daemon=True).start()
 
     def open_web() -> None:
-        ensure_web(lambda: webbrowser.open(WEB_URL))
+        workspace.present()
+        ensure_web(workspace.load_workspace)
 
     def read_text(label: str, text: str) -> None:
         cleaned = (text or "").strip()
@@ -901,11 +905,6 @@ def main() -> int:
     def on_read_selection() -> None:
         text = capture_selected_text()
         if not text:
-            clipboard = _clipboard()
-            text = clipboard.text().strip() if clipboard is not None else ""
-            if text:
-                read_text("Clipboard", text)
-                return
             notify("Read Docs", f"No selected text detected. Highlight text, then press {selection_hotkey_label()}.")
             return
         read_text("Highlighted", text)
@@ -1175,11 +1174,11 @@ def main() -> int:
             changed = True
         if selection_name != bindings["selection_name"]:
             try:
-                bindings["selection"] = keyboard.HotKey(keyboard.HotKey.parse(selection_name), on_hotkey)
+                bindings["selection"] = None if selection_name == "cmd_r" else keyboard.HotKey(keyboard.HotKey.parse(selection_name), on_hotkey)
             except ValueError as exc:
                 print(f"[doc-reader] {exc}; falling back to {DEFAULT_WINDOWS_SELECTION_HOTKEY}", flush=True)
                 selection_name = DEFAULT_WINDOWS_SELECTION_HOTKEY
-                bindings["selection"] = keyboard.HotKey(keyboard.HotKey.parse(selection_name), on_hotkey)
+                bindings["selection"] = None
             bindings["selection_name"] = selection_name
             changed = True
         return changed
@@ -1275,7 +1274,52 @@ def main() -> int:
             hotkey_state["dictation_down"] = False
             bridge.dictationStopped.emit()
 
-    listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+    from .modifier_gesture import ModifierGesture
+    read_gesture = ModifierGesture(0x5C)  # VK_RWIN, never the left Windows key
+    alt_gesture = ModifierGesture(0xA4)   # VK_LMENU, never AltGr
+    physical_held: set[int] = set()
+
+    def filter_event(message, data):
+        # Replayed modifiers and our paste/copy events must reach Windows but
+        # never recursively enter gesture recognition or pynput callbacks.
+        if data.flags & 0x10:  # LLKHF_INJECTED
+            return False
+        down = message in (0x100, 0x104)
+        vk = int(data.vkCode)
+        other_held = bool(physical_held - {vk})
+        if down:
+            physical_held.add(vk)
+        else:
+            physical_held.discard(vk)
+        suppress = False
+        for gesture, enabled, is_read in (
+            (read_gesture, bindings["selection_name"] == "cmd_r", True),
+            (alt_gesture, bindings["dictation_name"] == "alt_l" and state["stt_enabled"], False),
+        ):
+            # Finish a key already held even when a setting changes mid-gesture.
+            if not enabled and not gesture.down:
+                continue
+            block, replay, action = gesture.event(vk, down, other_held=other_held)
+            for replay_key, pressed in replay:
+                import ctypes
+                flags = (0x0001 if replay_key == 0x5C else 0) | (0 if pressed else 0x0002)
+                ctypes.windll.user32.keybd_event(replay_key, 0, flags, 0)
+            suppress = suppress or block
+            if is_read:
+                if action == "tap" and enabled:
+                    on_hotkey()
+            elif action == "start":
+                on_press(keyboard.Key.alt_l)
+            elif action == "cancel":
+                hotkey_state["dictation_down"] = False
+                bridge.dictationCancelled.emit("keyboard shortcut")
+            elif action in ("tap", "release"):
+                on_release(keyboard.Key.alt_l)
+        if suppress:
+            listener_holder["listener"].suppress_event()
+        return True
+
+    listener = keyboard.Listener(on_press=on_press, on_release=on_release, win32_event_filter=filter_event)
     listener_holder["listener"] = listener
     listener.daemon = True
     listener.start()
@@ -1327,7 +1371,7 @@ def main() -> int:
                         active_id = device["id"]
                 payload: dict[str, Any] = {
                     "devices": [{"id": d["id"], "name": d["name"]} for d in devices],
-                    "microphone_authorization": "authorized",
+                    "microphone_authorization": "authorized" if recorder._stream is not None else ("denied" if recorder.last_error else "not determined"),
                     "input_monitoring_trusted": True,
                     "accessibility_trusted": True,
                     "active_microphone_id": active_id,
@@ -1400,6 +1444,20 @@ def main() -> int:
 
     bridge.stateUpdated.connect(on_state_updated)
     threading.Thread(target=heartbeat_loop, name="doc-reader-heartbeat", daemon=True).start()
+
+    def poll_workspace_request() -> None:
+        signal = root / "show-workspace"
+        if signal.exists():
+            try:
+                signal.unlink()
+            except OSError:
+                return
+            open_web()
+
+    window_timer = QTimer()
+    window_timer.setInterval(350)
+    window_timer.timeout.connect(poll_workspace_request)
+    window_timer.start()
 
     tray.show()
     set_status("Read Docs helper online.")

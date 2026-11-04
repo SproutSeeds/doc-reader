@@ -21,7 +21,7 @@ static class DocReaderLauncher {
                     Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".doc-reader-managed", "logs"));
             }
         } catch (Exception error) {
-            MessageBox.Show(error.Message, "Doc Reader", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(error.Message, "Read Docs", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 }

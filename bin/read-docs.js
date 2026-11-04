@@ -113,7 +113,7 @@ Windows (run from a source checkout; uses .venv next to bin/):
   read-docs restart          Stop then start
   read-docs status           Show service health (also web-status, tts-status)
   read-docs doctor           Check Python, CUDA, Kokoro, ffmpeg, espeak, microphone
-  read-docs open             Open the web app, starting services if needed
+  read-docs open             Open the Read Docs window, starting services if needed
   read-docs enable-startup   Launch at login (Startup folder shortcut)
   read-docs disable-startup  Remove the login shortcut
   read-docs web              Run the web app in the foreground

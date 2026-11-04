@@ -1,8 +1,8 @@
 # Read Docs
 
 Read Docs reads documents and selected text aloud, turns speech into text,
-and keeps the results in a local Library. It includes a macOS menu-bar app,
-a Windows tray helper, and a shared web workspace.
+and keeps the results in a local Library. It opens in its own desktop window,
+with a menu-bar helper on Mac and a tray helper on Windows.
 
 Windows support, the reading workspace, and configurable hotkeys were contributed
 by [Aaron Tate](https://github.com/AaronTateDev) in his
@@ -33,18 +33,25 @@ Maintained by SproutSeeds. Research stewardship: Fractal Research Group ([frg.ea
 - Supports pause/resume, active-field dictation insertion, and selectable speech
   backends.
 
-## Desktop downloads (0.6.2 preview)
+## Desktop downloads (0.7.0 preview)
 
 [Download Read Docs for Mac or Windows](https://frg.earth/read-docs).
 Choose Apple silicon, Intel Mac, or Windows x64. Mac users drag the app into
 Applications; Windows users run the installer. Python, speech dependencies,
 FFmpeg and eSpeak are included. Node, npm, a terminal and developer tools are
-unnecessary for these downloads. Speech models download on first use.
+unnecessary for these downloads. Kokoro, all 28 English voices and multilingual
+Whisper model files are included; the installed app works offline.
+
+First launch walks through Speech, Access, Shortcuts and Try it. Hold **Left
+Option / Alt** to dictate; tap **Right Command / Windows** alone to read highlighted
+text. The setup shows the keys beside the spacebar, preserves existing custom
+choices, and offers Ctrl+Alt+R when a keyboard has no right Windows key. Ordinary
+key combinations keep their OS behavior. The microphone stays off until enabled.
 
 The desktop preview uses Kokoro 82M (`af_heart`) for reading and multilingual
 Whisper for dictation (`base` on Mac, `small` on Windows), running on CPU. It
-defaults to English. Other Whisper languages and Kokoro's eSpeak-backed
-languages are available; Japanese and Chinese TTS extras, Pocket, Kitten and GPU
+defaults to English. Other Whisper languages are included. Additional Kokoro
+languages, Japanese and Chinese TTS extras, Pocket, Kitten and GPU
 setup remain advanced source/npm installation options. Existing libraries and
 settings stay in the user's `.doc-reader-managed` folder.
 
@@ -55,10 +62,10 @@ microphone, global-shortcut, clipboard-insertion and sleep/wake acceptance.
 
 ## Source and npm platform support
 
-- **macOS**: menu-bar app, login agent, Right Command / Command-L selection
-  hotkey, Option hold-to-dictate, and the right-click Services item.
-- **Windows 10/11**: system-tray helper, Ctrl+Alt+R selection hotkey, Right Ctrl
-  hold-to-dictate, login startup shortcut, and the same local web app. Kokoro and
+- **macOS**: desktop window, menu-bar app, login agent, Right Command selection
+  hotkey, Left Option hold-to-dictate, and the right-click Services item.
+- **Windows 10/11**: desktop window, system-tray helper, Right Windows selection hotkey,
+  Left Alt hold-to-dictate and login startup shortcut. Kokoro and
   Whisper run on an NVIDIA GPU through CUDA when one is present, otherwise on CPU.
 - **Linux**: the document CLI works with the same Python engine; the tray helper
   and service orchestration are not packaged.
@@ -72,7 +79,7 @@ Automated checks cover platform logic and macOS compilation; physical microphone
 keyboard, clipboard insertion, and sleep/wake checks remain part of release testing.
 
 Everything runs locally on your PC: the Kokoro speech service, Whisper
-speech-to-text, the web app, and a tray helper for hotkeys and dictation.
+speech-to-text, the workspace in its own window, and a tray helper for hotkeys and dictation.
 
 Prerequisites (one time):
 
@@ -99,9 +106,10 @@ cd doc-reader
 
 The first run builds `.venv` (PyTorch with CUDA 12.4 when an NVIDIA GPU is
 detected, otherwise the CPU build), installs Kokoro, faster-whisper, PySide6,
-pynput, and sounddevice, starts the three background processes, and opens
-`http://127.0.0.1:8766`. The first Kokoro and Whisper model downloads take a
-minute or two; the web page shows `local-kokoro online` once speech is ready.
+pynput, and sounddevice, starts the three background processes, and opens the
+desktop window. Source/npm installations download models on first use; the
+desktop downloads above already include them. The loopback workspace at
+`http://127.0.0.1:8766` remains available for development.
 
 Useful commands:
 

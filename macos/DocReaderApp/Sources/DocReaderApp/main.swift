@@ -1447,10 +1447,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     // /api/native/status poll as small specs ("alt_r", "f8", "mouse:x1",
     // "<ctrl>+<shift>+r"). Anything missing or unparseable keeps the built-in keys:
     // hold Option to dictate, Control+Option+Command+R (and the older gestures) to read.
+    private var workspaceWindow: WorkspaceWindowController?
     private var dictationHotkeySpec = ""
     private var readbackShortcutSpec = ""
     private var dictationModifierFlag: NSEvent.ModifierFlags? = .option
-    private var dictationModifierKeyCodes: Set<UInt16> = [58, 61]
+    private var dictationModifierKeyCodes: Set<UInt16> = [58]
     private var dictationPlainKeyCode: UInt16?
     private var dictationMouseButton: Int?
     private var dictationKeyDisplayName = "Option"
@@ -1499,13 +1500,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         }
         ReaderPreferences.migrateLegacySettingsIfNeeded()
         buildMenu()
+        DistributedNotificationCenter.default().addObserver(self, selector: #selector(openReader), name: Notification.Name("ReadDocsShowWorkspace"), object: nil)
+        showWorkspace(load: false)
         installDictationHotkeyMonitor()
         installSelectedTextReadbackMonitor()
         selectedTextReader.onDiagnostic = { [weak self] message in self?.logDictation(message) }
         selectedTextReader.startMonitoring()
         installCustomDictationMonitors()
         ensureWebAppRunning {
-            if DesktopRuntime.python != nil { NSWorkspace.shared.open(self.webBaseURL) }
+            self.showWorkspace()
         }
         ensureStartupOrchestration()
         statusTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
@@ -1534,7 +1537,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             return false
         }
 
-        NSWorkspace.shared.open(webBaseURL)
+        DistributedNotificationCenter.default().post(name: Notification.Name("ReadDocsShowWorkspace"), object: nil)
         NSApp.terminate(nil)
         return true
     }
@@ -1550,7 +1553,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         menu.delegate = self
         menu.addItem(NSMenuItem(title: "Open Read Docs", action: #selector(openReader), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Read Clipboard", action: #selector(readClipboard), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Read Selected Text (Right Command or Command-L)", action: #selector(readSelectedText), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Read Selected Text (tap Right Command)", action: #selector(readSelectedText), keyEquivalent: ""))
         menu.addItem(pauseMenuItem)
         menu.addItem(stopMenuItem)
         menu.addItem(.separator())
@@ -1567,6 +1570,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             menuItem.target = self
         }
         item.menu = menu
+        let mainMenu = NSMenu()
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu(title: "Read Docs")
+        appMenu.addItem(withTitle: "Quit Read Docs", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        mainMenu.addItem(appItem)
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        for (title, action, key) in [("Undo", "undo:", "z"), ("Cut", "cut:", "x"), ("Copy", "copy:", "c"), ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")] {
+            editMenu.addItem(withTitle: title, action: Selector(action), keyEquivalent: key)
+        }
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+        NSApp.mainMenu = mainMenu
         updateMenuControls()
     }
 
@@ -1617,16 +1634,42 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         }
     }
 
-    @objc private func openReader() {
-        guard !shouldSuppressBrowserOpenForDictation() else {
-            return
-        }
-        ensureWebAppRunning { [weak self] in
-            guard let self else {
-                return
+    private func showWorkspace(load: Bool = true) {
+        if workspaceWindow == nil {
+            let controller = WorkspaceWindowController(url: webBaseURL)
+            controller.permissionAction = { [weak self] permission in
+                guard let self else { return }
+                switch permission {
+                case "microphone":
+                    if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+                        AVCaptureDevice.requestAccess(for: .audio) { _ in
+                            DispatchQueue.main.async { self.publishNativeDictationStatus() }
+                        }
+                    } else {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+                    }
+                case "accessibility":
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                case "input":
+                    CGRequestListenEventAccess()
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+                default: break
+                }
             }
-            NSWorkspace.shared.open(self.webBaseURL)
+            workspaceWindow = controller
         }
+        workspaceWindow?.present()
+        if load { workspaceWindow?.loadWorkspace() }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openReader()
+        return true
+    }
+
+    @objc private func openReader() {
+        showWorkspace(load: false)
+        ensureWebAppRunning { [weak self] in self?.showWorkspace() }
     }
 
     @objc private func readClipboard() {
@@ -1795,6 +1838,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             optionKeyWasDown = false
             dictationGestureActive = false
         }
+        if dictationGestureActive && dictationModifierFlag != nil && dictationCaptureBusy {
+            optionKeyWasDown = false
+            dictationGestureActive = false
+            stopDictationRecording(send: false)
+        }
         if let customCode = customReadbackKeyCode, let customFlags = customReadbackFlags {
             let pressed = flags.intersection([.control, .option, .shift, .command])
             guard event.keyCode == customCode, pressed == customFlags else {
@@ -1805,6 +1853,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             pendingDictationStart = nil
             logDictation("custom selected-text readback shortcut")
             readSelectedText()
+            return
+        }
+        if readbackShortcutSpec == "cmd_r" || readbackShortcutSpec.isEmpty {
+            if readbackKeyWasDown { cancelPendingReadbackGesture(reason: "right command used in a key chord") }
+            selectedTextReader.noteNonReadbackKey(event)
             return
         }
         let usesControlCommand = flags.contains(.control) && flags.contains(.command)
@@ -1886,6 +1939,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             scheduleDictationStart()
         } else {
             if optionDown {
+                if dictationCaptureBusy {
+                    optionKeyWasDown = false
+                    dictationGestureActive = false
+                    stopDictationRecording(send: false)
+                }
                 if pendingDictationStart != nil {
                     pendingDictationStart?.cancel()
                     pendingDictationStart = nil
@@ -1918,17 +1976,17 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             readbackKeyWasDown = false
             return
         }
-        let commandDown = flags.contains(.command)
+        let commandDown = CGEventSource.keyState(.combinedSessionState, key: rightCommandKeyCode)
         if event.keyCode == rightCommandKeyCode {
             if commandDown {
                 readbackKeyWasDown = true
                 readbackGestureCanceled = false
-                scheduleReadbackGesture()
+                readbackGestureCanceled = !flags.intersection([.control, .option, .shift]).isEmpty
+                    || CGEventSource.keyState(.combinedSessionState, key: 55)
             } else {
                 let shouldReadOnRelease =
                     readbackKeyWasDown &&
-                    !readbackGestureCanceled &&
-                    pendingReadbackGesture != nil
+                    !readbackGestureCanceled
                 pendingReadbackGesture?.cancel()
                 pendingReadbackGesture = nil
                 readbackKeyWasDown = false
@@ -1943,26 +2001,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         if readbackKeyWasDown, commandDown {
             cancelPendingReadbackGesture(reason: "right command readback canceled by modifier chord")
         }
-    }
-
-    private func scheduleReadbackGesture() {
-        pendingReadbackGesture?.cancel()
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self else {
-                return
-            }
-            self.pendingReadbackGesture = nil
-            guard self.readbackKeyWasDown, !self.readbackGestureCanceled else {
-                return
-            }
-            guard self.isBareCommandKeyCurrentlyDown() else {
-                self.cancelPendingReadbackGesture(reason: "right command readback canceled before delay elapsed")
-                return
-            }
-            self.triggerSelectedTextReadback(reason: "right command readback")
-        }
-        pendingReadbackGesture = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + readbackGestureDelaySeconds, execute: workItem)
     }
 
     private func triggerSelectedTextReadback(reason: String) {
@@ -2230,7 +2268,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
         cancelPendingReadbackGesture(reason: "read-selection shortcut changed")
         readbackKeyWasDown = false
         let chord = spec.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !chord.isEmpty, chord != "<ctrl>+<alt>+<cmd>+r" else {
+        guard !chord.isEmpty, chord != "cmd_r" else {
             customReadbackFlags = nil
             customReadbackKeyCode = nil
             logDictation("read-selection shortcut: built-in")
@@ -3381,9 +3419,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
                 if wasEnabled && !self.dictationEnabled && (self.dictationCaptureBusy || self.dictationTranscriptionID != nil) {
                     self.cancelDictationRecording()
                 }
-                if sttEnabled {
-                    self.requestInputMonitoringAccessIfNeeded()
-                }
                 if !self.dictationCaptureBusy && self.dictationTranscriptionID == nil {
                     self.statusMenuItem.title = self.dictationEnabled ? status : "Speech-to-text is off. Enable it to record."
                 }
@@ -3412,7 +3447,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
                     if succeeded {
                         self.refreshWebState()
                         if openWhenDone && !self.shouldSuppressBrowserOpenForDictation() {
-                            NSWorkspace.shared.open(self.webBaseURL)
+                            self.showWorkspace()
                         }
                     } else {
                         let message = data.flatMap { String(data: $0, encoding: .utf8) }

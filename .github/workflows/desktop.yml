@@ -43,10 +43,18 @@ jobs:
           fi
         env:
           HF_HOME: ${{ runner.temp }}/doc-reader-models
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
           PYTHONDONTWRITEBYTECODE: '1'
       - name: Package macOS app for release signing
         if: runner.os == 'macOS'
         run: ditto -c -k --sequesterRsrc --keepParent "build/desktop/Doc Reader.app" "Doc-Reader-${{ matrix.target }}.zip"
+      - name: Verify packaged Windows app window
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "build/desktop/Doc Reader/runtime/python.exe" packaging/smoke_window.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build Windows installer
         if: runner.os == 'Windows'
         shell: pwsh

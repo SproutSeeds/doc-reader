@@ -40,6 +40,7 @@ swiftc \
   -swift-version 5 \
   -O \
   -framework AppKit \
+  -framework WebKit \
   -framework ApplicationServices \
   -framework AVFoundation \
   -framework Security \
@@ -62,7 +63,7 @@ cat > "$INFO_PLIST" <<PLIST
     <key>CFBundleIconFile</key>
     <string>DocReaderIcon</string>
     <key>CFBundleName</key>
-    <string>Doc Reader</string>
+    <string>Read Docs</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

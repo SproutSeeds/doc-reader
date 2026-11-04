@@ -117,6 +117,7 @@ class WebappLibraryTests(unittest.TestCase):
         self.thread.start()
         self.speech_url = f"http://127.0.0.1:{self.server.server_port}"
         self.old_env = {
+            "DOC_READER_STT_ENABLED": os.environ.get("DOC_READER_STT_ENABLED"),
             "DOC_READER_WEB_SPEECH_BACKEND": os.environ.get("DOC_READER_WEB_SPEECH_BACKEND"),
             "DOC_READER_TTS_UMBRA_URL": os.environ.get("DOC_READER_TTS_UMBRA_URL"),
             "DOC_READER_TTS_MAC_URL": os.environ.get("DOC_READER_TTS_MAC_URL"),
@@ -125,6 +126,7 @@ class WebappLibraryTests(unittest.TestCase):
             "DOC_READER_ANALYSIS_BACKEND": os.environ.get("DOC_READER_ANALYSIS_BACKEND"),
         }
         os.environ["DOC_READER_WEB_SPEECH_BACKEND"] = "tailscale-4090"
+        os.environ["DOC_READER_STT_ENABLED"] = "1"
         os.environ["DOC_READER_TTS_UMBRA_URL"] = self.speech_url
         os.environ["DOC_READER_TTS_MAC_URL"] = self.speech_url
         os.environ.pop("DOC_READER_STT_URL", None)

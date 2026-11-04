@@ -21,6 +21,10 @@ eSpeak NG source: https://github.com/espeak-ng/espeak-ng/tree/4870adfa25b1a32b43
 Intel Mac packaging links CTranslate2 to the OpenMP runtime already loaded by
 PyTorch. The build adjustment is recorded in packaging/build_desktop.py.
 
-Models download from Hugging Face when first used. An internet connection is
-needed for that download; local reading and transcription then run on the device.
+Desktop installers include pinned Kokoro weights, all 28 English voice packs,
+and multilingual Whisper (base on Mac, small on Windows). models/manifest.json
+records source revisions and SHA-256 hashes. Model cards and voice attribution
+are retained with the weights; license texts are in licenses/. Reading and
+dictation work locally without a model download. Source/npm installations may
+download missing models on first use.
 The Windows interface builds on Aaron Tate's original Windows integration.

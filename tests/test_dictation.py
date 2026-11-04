@@ -54,6 +54,7 @@ class DictationTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.reader = webapp.ReaderService(Path(self.temp.name))
+        self.reader._save_settings({"stt_enabled": True})
         self.reader.state = lambda: {}
 
     def test_heartbeat_cannot_overwrite_an_enable_toggle(self):

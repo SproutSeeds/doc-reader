@@ -17,7 +17,6 @@ import os
 import subprocess
 import sys
 import time
-import webbrowser
 from pathlib import Path
 from typing import Any
 from urllib import error as urlerror
@@ -505,7 +504,7 @@ def cmd_start(*, open_browser: bool = True, quiet: bool = False) -> int:
         else:
             print(f"[doc-reader] Speech service is still starting; check {_log_file('tts')} if playback fails.")
     if open_browser:
-        webbrowser.open(WEB_URL)
+        request_workspace_window()
     return 0
 
 
@@ -604,11 +603,16 @@ def cmd_doctor() -> int:
     return 0 if ok else 1
 
 
+def request_workspace_window() -> None:
+    # A per-profile signal also raises an already-running helper's one window.
+    (_root() / "show-workspace").write_text(str(time.time_ns()), encoding="utf-8")
+
+
 def cmd_open() -> int:
     code = cmd_start(open_browser=False, quiet=True)
     if code != 0:
         return code
-    webbrowser.open(WEB_URL)
+    request_workspace_window()
     return 0
 
 

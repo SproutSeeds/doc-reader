@@ -91,7 +91,7 @@ class ProcessOwnershipTests(unittest.TestCase):
 
     def test_open_repairs_the_whole_stack(self):
         with patch.object(windows_app, "cmd_start", return_value=0) as start, \
-                patch.object(windows_app.webbrowser, "open") as open_browser:
+                patch.object(windows_app, "request_workspace_window") as open_browser:
             self.assertEqual(windows_app.cmd_open(), 0)
             start.assert_called_once_with(open_browser=False, quiet=True)
             open_browser.assert_called_once()
