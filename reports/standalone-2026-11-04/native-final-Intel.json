@@ -1,0 +1,11 @@
+{
+  "target": "Intel",
+  "source_commit": "e36c71082b9b8dfd20810f856cc1dc80e9a90b7d",
+  "runtime_build_ci": "https://github.com/SproutSeeds/doc-reader/actions/runs/41783003403",
+  "runtime_source_commit": "dfab59e2598b3762191d1b3a862a3b1acc0bffff",
+  "native_rebuilt_locally": true,
+  "architecture": "x86_64",
+  "native_sha256": "f4c88a8ca429ffa5cfb452245827dbce47c9e396bd4e9033cd8c4cc3ecb1a7e0",
+  "reason": "Prevent obsolete npm source in the writable profile from shadowing bundled Python code.",
+  "nested_runtime_signatures": "Unchanged, deep strict verification passed"
+}

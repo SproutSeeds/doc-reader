@@ -20,6 +20,11 @@ revisions and checksums. CI speech runs with an empty cache and Hugging Face /
 Transformers offline flags. Long relocated eSpeak paths use a process-private
 short phoneme-data directory to avoid the library's path-length limit.
 
+The Mac launcher also enables Python's safe import path so source files left by
+an earlier npm installation cannot override the code shipped in the app. The
+native runtime regression starts Python from a profile containing deliberately
+obsolete source and verifies that the selected runtime wins.
+
 Run the Python suite, native capture/readback tests, the native WebKit window
 harness, workspace and setup browser harnesses, and the packaged Windows window
 smoke. Browser setup permissions and speech samples are simulated; manual audio,

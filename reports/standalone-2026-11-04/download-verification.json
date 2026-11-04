@@ -1,0 +1,23 @@
+[
+  {
+    "name": "Doc-Reader-0.7.0-macOS-Apple-Silicon.dmg",
+    "status": 200,
+    "bytes": 921765314,
+    "sha256": "3d6a235adfe28cf023fbde868fea886d3b2c7a8e824dfffe7dcff30f5addc1f7",
+    "public_download": "PASS"
+  },
+  {
+    "name": "Doc-Reader-0.7.0-macOS-Intel.dmg",
+    "status": 200,
+    "bytes": 1028054436,
+    "sha256": "b8c656e5221a0e2a78677559c2644308dfc18a2f0ce201315d6270ea64b533a2",
+    "public_download": "PASS"
+  },
+  {
+    "name": "Doc-Reader-0.7.0-Windows-x64-Setup.exe",
+    "status": 200,
+    "bytes": 1337350218,
+    "sha256": "2460c2f3a80363794886ab868e5442d12c061abf661a3c77aeaa7587f4f651a8",
+    "public_download": "PASS"
+  }
+]

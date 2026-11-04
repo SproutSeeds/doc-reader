@@ -62,6 +62,9 @@ microphone, global-shortcut, clipboard-insertion and sleep/wake acceptance.
 
 ## Source and npm platform support
 
+The published npm package remains the earlier 0.5.2 release. Use the desktop
+download or current source checkout for the 0.7.0 window and setup flow.
+
 - **macOS**: desktop window, menu-bar app, login agent, Right Command selection
   hotkey, Left Option hold-to-dictate, and the right-click Services item.
 - **Windows 10/11**: desktop window, system-tray helper, Right Windows selection hotkey,

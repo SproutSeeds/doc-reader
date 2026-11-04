@@ -1,0 +1,11 @@
+{
+  "target": "Apple-Silicon",
+  "source_commit": "e36c71082b9b8dfd20810f856cc1dc80e9a90b7d",
+  "runtime_build_ci": "https://github.com/SproutSeeds/doc-reader/actions/runs/41783003403",
+  "runtime_source_commit": "dfab59e2598b3762191d1b3a862a3b1acc0bffff",
+  "native_rebuilt_locally": true,
+  "architecture": "arm64",
+  "native_sha256": "a2c5bd50087e481753da2669637fa80da5cfd3f1b5175c6cf39ceffadb6e7a87",
+  "reason": "Prevent obsolete npm source in the writable profile from shadowing bundled Python code.",
+  "nested_runtime_signatures": "Unchanged, deep strict verification passed"
+}

@@ -1,0 +1,52 @@
+{
+  "status": "PASS",
+  "completed_at": "2026-11-04T06:59:16.779467+00:00",
+  "version": "0.7.0",
+  "release_source_commit": "e36c71082b9b8dfd20810f856cc1dc80e9a90b7d",
+  "release_url": "https://github.com/SproutSeeds/doc-reader/releases/tag/v0.7.0",
+  "github_release_id": 433576511,
+  "prerelease": true,
+  "download_page": "https://frg.earth/read-docs",
+  "production_deployment": "dpl_6z9g93zpxdnQRJYDEZ6tuGd4WQEt",
+  "website_scope": [
+    "public/read-docs/index.html",
+    "public/read-docs/releases.json"
+  ],
+  "site_tests_passed": 382,
+  "all_three_anonymous_installer_download_hashes_verified": true,
+  "local_mac_updated": true,
+  "native_setup_visually_verified": true,
+  "npm_published_version_unchanged": "0.5.2",
+  "public_resume_intake": {
+    "request_id": "doc-reader-standalone-2026-11-04-r1",
+    "status": "completed-verified",
+    "url": "https://frg.earth/resume",
+    "writer_released": true
+  },
+  "remaining_acceptance": [
+    "Physical microphone, keyboard shortcuts, text insertion and sleep-wake on target devices",
+    "Windows unsigned preview"
+  ],
+  "site_verification": [
+    {
+      "path": "/Volumes/Code_2TB/code/frg-site/docs/verification/read-docs-app-0.7.0/DEPLOYMENT-SCOPE.json",
+      "sha256": "24f44fc9f9329f459624e6b4dff7c8f365dcd2d636e7b34aef5e2c3efd0d5a37"
+    },
+    {
+      "path": "/Volumes/Code_2TB/code/frg-site/docs/verification/read-docs-app-0.7.0/LIVE-VERIFICATION.json",
+      "sha256": "1a31845a046938debeac9b13ebdc9e2286da38dc83f9a9da78139242aa3f18f8"
+    },
+    {
+      "path": "/Volumes/Code_2TB/code/frg-site/docs/verification/read-docs-app-0.7.0/local-BROWSER-QA.json",
+      "sha256": "89f2f0a8fca802ac0390c00672acf6b7db7af66c799c1900c0f0fc8a5fae8337"
+    },
+    {
+      "path": "/Volumes/Code_2TB/code/frg-site/docs/verification/read-docs-app-0.7.0/live-BROWSER-QA.json",
+      "sha256": "399874306b3d0dd8af2dcad944822cff05ab57f450806b0f796384ab97d3f95d"
+    },
+    {
+      "path": "/Volumes/Code_2TB/code/frg-site/docs/verification/read-docs-app-0.7.0/LOCAL-PRESERVATION.json",
+      "sha256": "a3e520625bdf6acd1a02e7b3db8c251ff67745a31b6b5f859308f6bd69ec02c9"
+    }
+  ]
+}

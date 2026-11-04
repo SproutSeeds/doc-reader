@@ -1,0 +1,20 @@
+{
+  "status": "PASS",
+  "existing_optional_engines_preserved": [
+    "pocket",
+    "kitten"
+  ],
+  "existing_extended_model_cache_preserved": true,
+  "bundled_default_models_used_by_shared_service": false,
+  "shared_speech_engines_available": [
+    "kokoro",
+    "whisper",
+    "pocket",
+    "kitten"
+  ],
+  "scope": "Existing local speech runtime and extended model cache retained; managed application source refreshed to 0.7.0.",
+  "native_app_uses_bundled_web": true,
+  "original_service_configuration_retained": true,
+  "downloaded_packages_independently_verified_offline": true,
+  "whisper_preload_enabled_for_setup": true
+}

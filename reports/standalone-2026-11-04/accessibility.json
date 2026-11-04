@@ -1,0 +1,34 @@
+[
+  {
+    "name": "canvas",
+    "violations": []
+  },
+  {
+    "name": "librarySidebar",
+    "violations": []
+  },
+  {
+    "name": "importMenu",
+    "violations": []
+  },
+  {
+    "name": "inspector",
+    "violations": []
+  },
+  {
+    "name": "voiceMenu",
+    "violations": []
+  },
+  {
+    "name": "rateMenu",
+    "violations": []
+  },
+  {
+    "name": "inspector",
+    "violations": []
+  },
+  {
+    "name": "dark canvas",
+    "violations": []
+  }
+]

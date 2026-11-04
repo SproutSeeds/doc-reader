@@ -1,0 +1,29 @@
+{
+  "status": "PASS",
+  "version": "0.7.0",
+  "source_commit": "e36c71082b9b8dfd20810f856cc1dc80e9a90b7d",
+  "preserved_library_files": 5573,
+  "existing_library_file_changes": [],
+  "derived_analysis_cache_refreshed": true,
+  "saved_preferences_preserved": true,
+  "volatile_status_fields_updated": [
+    "microphones",
+    "last_dictation_event",
+    "native_dictation_status_at"
+  ],
+  "interface_matches_source": true,
+  "native_binary_matches_final_release": true,
+  "existing_shared_speech_runtime_preserved": true,
+  "existing_extended_model_cache_preserved": true,
+  "shared_speech_engines_available": [
+    "kokoro",
+    "whisper",
+    "pocket",
+    "kitten"
+  ],
+  "complete_bundled_models_present_in_app": true,
+  "speech_health_ok": true,
+  "legacy_npm_import_shadowing": "fixed",
+  "kokoro_and_whisper_ready": true,
+  "whisper_preload_enabled_for_setup": true
+}
