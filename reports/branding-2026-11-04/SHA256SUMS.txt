@@ -1,0 +1,3 @@
+a75f04ce028be8bcdc4a8900f212dcdade9c6ce4a3729e846c77d2aaf5a0f2ec  Read-Docs-0.7.2-macOS-Apple-Silicon.dmg
+2514c01efb85131f77bf99472a500a9cb0c56bf88dd66d1daa2a5a7bc1c5e0bc  Read-Docs-0.7.2-macOS-Intel.dmg
+dc256302f354f415019d98091529badc536ec1e4a29f860fde517f2b052f8b6c  Read-Docs-0.7.2-Windows-x64-Setup.exe

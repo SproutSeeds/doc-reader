@@ -1,0 +1,12 @@
+{
+  "source_commit": "85e0982f5aa9eccb364ba8d701ae894eef02908f",
+  "cancelled_duplicate_tag_runs": [
+    41906049635,
+    41906049569
+  ],
+  "successful_release_runs": [
+    41903556751,
+    41903554892
+  ],
+  "reason": "Publishing the v0.7.2 tag retriggered identical workflows at the already verified source commit. Cancelled redundant executions; the successful original runs are authoritative."
+}

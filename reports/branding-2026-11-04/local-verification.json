@@ -1,0 +1,19 @@
+{
+  "status": "PASS",
+  "source_commit": "85e0982f5aa9eccb364ba8d701ae894eef02908f",
+  "python": {
+    "tests": 100,
+    "skipped": 4,
+    "status": "PASS"
+  },
+  "native": [
+    "capture and selected-text regression suites",
+    "obsolete-profile import regression with supported Python",
+    "arm64 and x86_64 builds",
+    "installed WKWebView window"
+  ],
+  "node": "PASS",
+  "npm_pack_dry_run": "PASS",
+  "icons": "actual ICNS and ICO visually inspected at large and 16/32/64 sizes",
+  "resume_disposition": "evidence only: branding patch to existing standalone desktop milestone"
+}

@@ -1,0 +1,11 @@
+{
+  "version": "0.7.2",
+  "source_commit": "85e0982f5aa9eccb364ba8d701ae894eef02908f",
+  "native_app_name": "Read Docs",
+  "clean_new_bundle_install": true,
+  "previous_bundle_preserved_for_rollback": true,
+  "shared_speech_process_preserved": true,
+  "shared_speech_configuration_preserved": true,
+  "library_and_preferences_reset": false,
+  "private_baseline_files": 5595
+}

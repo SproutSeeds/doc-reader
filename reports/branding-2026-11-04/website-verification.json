@@ -1,0 +1,21 @@
+{
+  "status": "PASS",
+  "url": "https://frg.earth/read-docs",
+  "version": "0.7.2",
+  "deployment": "dpl_GDj5NFrnm2f8Mo8V43ThW5SPSMh4",
+  "changed_paths": [
+    "src/public/read-docs/apple-touch-icon-v1.png",
+    "src/public/read-docs/icon-v1.png",
+    "src/public/read-docs/index.html",
+    "src/public/read-docs/releases.json"
+  ],
+  "unrelated_source_bytes_preserved": true,
+  "unrelated_local_files_preserved": 1029,
+  "site_tests_passed": 382,
+  "live_viewports_verified": 8,
+  "share_title": "Read Docs",
+  "share_descriptions": "empty",
+  "public_downloads": "all three streams match SHA256",
+  "frg_worktree": "intentionally dirty with classified paths and a coordinated checkpoint next action",
+  "frg_unclassified_paths": 0
+}

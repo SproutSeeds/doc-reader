@@ -1,0 +1,9 @@
+{
+  "architecture": "intel",
+  "source_commit": "85e0982f5aa9eccb364ba8d701ae894eef02908f",
+  "dependency_cache": "verified signed 0.7.1 bundle",
+  "native_wrapper": "rebuilt from 0.7.2 source",
+  "first_party_source": "replaced completely from release source",
+  "models_verified": 37,
+  "requirements_unchanged": true
+}
