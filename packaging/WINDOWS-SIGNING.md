@@ -31,6 +31,12 @@ after these gates pass; then verify the anonymous download's hash and signature
 before updating the public manifest. This host-driven signing step uses an
 existing account; GitHub OIDC signing is not configured yet.
 
+The pinned uv runtime strips signature data from four vendor libraries. The
+builder restores these exact files from the matching checksum-pinned unstripped
+Python archive and verifies the original vendor signatures. See
+[the upstream stripping issue](https://github.com/astral-sh/python-build-standalone/issues/855).
+Do not remove certificate headers or re-sign malformed vendor binaries.
+
 Publisher verification does not establish SmartScreen reputation or physical
 microphone/keyboard/speaker acceptance. Keep those limits explicit. Never ask
 users to disable Windows protections to install a release.

@@ -40,6 +40,9 @@ def main() -> None:
         installed = next(install.glob("cpython-*"))
         shutil.copytree(installed, runtime, symlinks=True)
     python = runtime / ("python.exe" if windows else "bin/python3")
+    if windows:
+        from windows_vendor_runtime import restore_vendor_libraries
+        restore_vendor_libraries(runtime, output / "python-vendor")
     run("uv", "pip", "install", "--python", python, "--system", "--break-system-packages",
         "-r", ROOT / "packaging/requirements-desktop.txt")
     site = Path(subprocess.check_output([str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True).strip())
