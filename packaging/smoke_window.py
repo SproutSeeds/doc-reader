@@ -22,6 +22,8 @@ with tempfile.TemporaryDirectory(prefix="read-docs-window-") as folder:
     try:
         app = QApplication([])
         window = WorkspaceWindow(f"http://127.0.0.1:{port}")
+        assert window.windowTitle() == "Read Docs"
+        assert not window.windowIcon().isNull(), "The packaged app icon is missing"
         window.present()
         done = [False]
         def check(value):

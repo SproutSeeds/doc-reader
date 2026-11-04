@@ -37,9 +37,9 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = Windows ]; then
-            "build/desktop/Doc Reader/runtime/python.exe" packaging/smoke_speech.py
+            "build/desktop/Read Docs/runtime/python.exe" packaging/smoke_speech.py
           else
-            "build/desktop/Doc Reader.app/Contents/Resources/runtime/bin/python3" packaging/smoke_speech.py
+            "build/desktop/Read Docs.app/Contents/Resources/runtime/bin/python3" packaging/smoke_speech.py
           fi
         env:
           HF_HOME: ${{ runner.temp }}/doc-reader-models
@@ -48,35 +48,51 @@ jobs:
           PYTHONDONTWRITEBYTECODE: '1'
       - name: Package macOS app for release signing
         if: runner.os == 'macOS'
-        run: ditto -c -k --sequesterRsrc --keepParent "build/desktop/Doc Reader.app" "Doc-Reader-${{ matrix.target }}.zip"
+        run: ditto -c -k --sequesterRsrc --keepParent "build/desktop/Read Docs.app" "Read-Docs-${{ matrix.target }}.zip"
       - name: Verify packaged Windows app window
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          & "build/desktop/Doc Reader/runtime/python.exe" packaging/smoke_window.py
+          & "build/desktop/Read Docs/runtime/python.exe" packaging/smoke_window.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build Windows installer
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" "/DPayload=$pwd\build\desktop\Doc Reader" packaging/windows.iss
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" "/DPayload=$pwd\build\desktop\Read Docs" packaging/windows.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify Windows installer on a clean profile
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $installer = Get-ChildItem dist/*Setup.exe | Select-Object -First 1
-          $destination = "$env:RUNNER_TEMP\Doc Reader Installed"
+          $destination = "$env:RUNNER_TEMP\Read Docs Installed"
           $process = Start-Process $installer.FullName -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$destination`"") -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
           & "$destination\runtime\python.exe" packaging/smoke_desktop.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $shell = New-Object -ComObject WScript.Shell
+          $programs = [Environment]::GetFolderPath('Programs')
+          $desktop = [Environment]::GetFolderPath('Desktop')
+          $old = $shell.CreateShortcut("$programs\Doc Reader.lnk")
+          $old.TargetPath = "$destination\DocReader.exe"
+          $old.Save()
+          $foreign = $shell.CreateShortcut("$desktop\Doc Reader.lnk")
+          $foreign.TargetPath = "$env:WINDIR\System32\notepad.exe"
+          $foreign.Save()
+          $process = Start-Process $installer.FullName -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$destination`"") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Upgrade failed: $($process.ExitCode)" }
+          if (Test-Path "$programs\Doc Reader.lnk") { throw 'Owned legacy shortcut was not migrated' }
+          if (!(Test-Path "$desktop\Doc Reader.lnk")) { throw 'Unrelated desktop shortcut was removed' }
+          $current = $shell.CreateShortcut("$programs\Read Docs.lnk")
+          if ($current.TargetPath -ne "$destination\DocReader.exe") { throw 'Read Docs shortcut has the wrong target' }
+          Write-Host 'PASS: clean install, upgrade, Read Docs shortcut and unrelated shortcut preservation'
       - uses: actions/upload-artifact@v4
         with:
-          name: Doc-Reader-${{ matrix.target }}
+          name: Read-Docs-${{ matrix.target }}
           path: |
-            Doc-Reader-*.zip
+            Read-Docs-*.zip
             dist/*Setup.exe
           if-no-files-found: error
           retention-days: 14

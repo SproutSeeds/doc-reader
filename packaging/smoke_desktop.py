@@ -15,6 +15,10 @@ for name in ("kokoro", "faster_whisper", "torch", "spacy", "en_core_web_sm", "py
 from doc_reader.platform_tools import find_tool, configure_espeak
 assert Path(find_tool("ffmpeg")).is_file()
 configure_espeak()
+from doc_reader.webapp import _web_metadata_asset
+for route in ("/favicon.ico", "/favicon.svg", "/apple-touch-icon.png", "/icons/doc-reader-192.png", "/icons/doc-reader-512.png"):
+    asset, content_type = _web_metadata_asset(route)
+    assert len(asset) > 100, f"Missing packaged branding: {route}"
 if sys.platform == "win32":
     for name in ("PySide6", "pynput", "sounddevice"):
         importlib.import_module(name)

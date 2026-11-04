@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import mimetypes
@@ -15,7 +16,6 @@ import threading
 import time
 import tempfile
 import uuid
-import zlib
 from collections import Counter
 from dataclasses import dataclass, asdict, field, fields
 from email.parser import BytesParser
@@ -3026,7 +3026,8 @@ def _native_helper_process_pids() -> list[int]:
         if pid == os.getpid():
             continue
         if (
-            "/Doc Reader.app/Contents/MacOS/DocReader" in command
+            "/Read Docs.app/Contents/MacOS/DocReader" in command
+            or "/Doc Reader.app/Contents/MacOS/DocReader" in command
             or "/DocReader.app/Contents/MacOS/DocReader" in command
         ):
             pids.append(pid)
@@ -3687,17 +3688,10 @@ def _managed_root() -> Path:
     return Path.home() / ".doc-reader-managed"
 
 
-DOC_READER_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Doc Reader">
-  <rect width="512" height="512" rx="112" fill="#17201c"/>
-  <rect x="148" y="84" width="216" height="344" rx="34" fill="#f4f8f4"/>
-  <path d="M286 84h44c18 0 34 16 34 34v44z" fill="#dce9e0"/>
-  <rect x="190" y="176" width="132" height="20" rx="10" fill="#4d5c54"/>
-  <rect x="190" y="226" width="156" height="20" rx="10" fill="#4d5c54"/>
-  <rect x="190" y="276" width="108" height="20" rx="10" fill="#4d5c54"/>
-  <rect x="190" y="354" width="50" height="18" rx="9" fill="#1f9b68"/>
-  <rect x="252" y="330" width="34" height="42" rx="10" fill="#2f7fd2"/>
-  <rect x="300" y="360" width="46" height="12" rx="6" fill="#b77a16"/>
-</svg>"""
+def _doc_reader_icon_svg() -> bytes:
+    encoded = base64.b64encode(_doc_reader_icon_png(512)).decode("ascii")
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Read Docs">'
+            f'<image width="512" height="512" href="data:image/png;base64,{encoded}"/></svg>').encode("utf-8")
 
 
 def _doc_reader_manifest() -> str:
@@ -3716,13 +3710,13 @@ def _doc_reader_manifest() -> str:
                     "src": "/icons/doc-reader-192.png",
                     "sizes": "192x192",
                     "type": "image/png",
-                    "purpose": "any maskable",
+                    "purpose": "any",
                 },
                 {
                     "src": "/icons/doc-reader-512.png",
                     "sizes": "512x512",
                     "type": "image/png",
-                    "purpose": "any maskable",
+                    "purpose": "any",
                 },
                 {
                     "src": "/icons/doc-reader.svg",
@@ -3740,7 +3734,7 @@ def _web_metadata_asset(route_path: str) -> tuple[bytes, str] | None:
     if route_path == "/favicon.ico":
         return _doc_reader_favicon_ico(), "image/x-icon"
     if route_path in {"/favicon.svg", "/icons/doc-reader.svg"}:
-        return DOC_READER_ICON_SVG.encode("utf-8"), "image/svg+xml; charset=utf-8"
+        return _doc_reader_icon_svg(), "image/svg+xml; charset=utf-8"
     if route_path in {"/apple-touch-icon.png", "/icons/doc-reader-180.png"}:
         return _doc_reader_icon_png(180), "image/png"
     if route_path == "/icons/doc-reader-192.png":
@@ -3762,86 +3756,10 @@ def _doc_reader_favicon_ico() -> bytes:
 
 @lru_cache(maxsize=12)
 def _doc_reader_icon_png(size: int) -> bytes:
-    size = max(16, min(1024, int(size)))
-    pixels = bytearray(size * size * 4)
-    _fill_rect(pixels, size, 0, 0, size, size, (23, 32, 28, 255))
+    available = (16, 32, 48, 64, 128, 180, 192, 256, 512, 1024)
+    size = min(available, key=lambda value: abs(value - int(size)))
+    return (Path(__file__).parent / "icons" / f"read-docs-{size}.png").read_bytes()
 
-    document_x = size * 0.289
-    document_y = size * 0.164
-    document_w = size * 0.422
-    document_h = size * 0.672
-    _fill_rounded_rect(pixels, size, document_x, document_y, document_w, document_h, size * 0.066, (244, 248, 244, 255))
-    _fill_rect(pixels, size, size * 0.559, document_y, size * 0.086, size * 0.153, (220, 233, 224, 255))
-
-    ink = (77, 92, 84, 255)
-    _fill_rounded_rect(pixels, size, size * 0.371, size * 0.344, size * 0.258, size * 0.039, size * 0.020, ink)
-    _fill_rounded_rect(pixels, size, size * 0.371, size * 0.441, size * 0.305, size * 0.039, size * 0.020, ink)
-    _fill_rounded_rect(pixels, size, size * 0.371, size * 0.539, size * 0.211, size * 0.039, size * 0.020, ink)
-
-    _fill_rounded_rect(pixels, size, size * 0.371, size * 0.691, size * 0.098, size * 0.035, size * 0.018, (31, 155, 104, 255))
-    _fill_rounded_rect(pixels, size, size * 0.492, size * 0.645, size * 0.066, size * 0.082, size * 0.020, (47, 127, 210, 255))
-    _fill_rounded_rect(pixels, size, size * 0.586, size * 0.703, size * 0.090, size * 0.023, size * 0.012, (183, 122, 22, 255))
-    return _encode_png_rgba(size, size, pixels)
-
-
-def _fill_rect(pixels: bytearray, canvas: int, x: float, y: float, width: float, height: float, color: tuple[int, int, int, int]) -> None:
-    x0 = max(0, int(round(x)))
-    y0 = max(0, int(round(y)))
-    x1 = min(canvas, int(round(x + width)))
-    y1 = min(canvas, int(round(y + height)))
-    for py in range(y0, y1):
-        offset = (py * canvas + x0) * 4
-        for _px in range(x0, x1):
-            pixels[offset:offset + 4] = bytes(color)
-            offset += 4
-
-
-def _fill_rounded_rect(
-    pixels: bytearray,
-    canvas: int,
-    x: float,
-    y: float,
-    width: float,
-    height: float,
-    radius: float,
-    color: tuple[int, int, int, int],
-) -> None:
-    x0 = max(0, int(round(x)))
-    y0 = max(0, int(round(y)))
-    x1 = min(canvas, int(round(x + width)))
-    y1 = min(canvas, int(round(y + height)))
-    radius = max(0.0, min(radius, width / 2, height / 2))
-    for py in range(y0, y1):
-        cy = py + 0.5
-        for px in range(x0, x1):
-            cx = px + 0.5
-            dx = max(x + radius - cx, 0.0, cx - (x + width - radius))
-            dy = max(y + radius - cy, 0.0, cy - (y + height - radius))
-            if dx * dx + dy * dy <= radius * radius:
-                offset = (py * canvas + px) * 4
-                pixels[offset:offset + 4] = bytes(color)
-
-
-def _encode_png_rgba(width: int, height: int, pixels: bytes | bytearray) -> bytes:
-    def chunk(kind: bytes, data: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(data))
-            + kind
-            + data
-            + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
-        )
-
-    rows = []
-    stride = width * 4
-    for y in range(height):
-        rows.append(b"\x00" + bytes(pixels[y * stride:(y + 1) * stride]))
-    raw = b"".join(rows)
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress(raw, 9))
-        + chunk(b"IEND", b"")
-    )
 
 
 INDEX_HTML = r"""<!doctype html>

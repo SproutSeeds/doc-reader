@@ -33,7 +33,7 @@ Maintained by SproutSeeds. Research stewardship: Fractal Research Group ([frg.ea
 - Supports pause/resume, active-field dictation insertion, and selectable speech
   backends.
 
-## Desktop downloads (0.7.1 preview)
+## Desktop downloads (0.7.2 preview)
 
 [Download Read Docs for Mac or Windows](https://frg.earth/read-docs).
 [Installation and first-use help](docs/desktop-guide.md).
@@ -221,10 +221,10 @@ Tailscale Serve is checked or configured, and the Mac-local speech service
 starts when needed. Remote speech startup is opt-in with
 `DOC_READER_REMOTE_SPEECH_AUTOSTART=1`. Use `read-docs ensure` to run that pass directly, or
 `read-docs doctor --json` to inspect readiness without starting dependencies.
-Opening `Doc Reader.app` runs the same readiness pass after the local web app is
+Opening `Read Docs.app` runs the same readiness pass after the local web app is
 reachable, so closing and reopening the app also repairs stopped speech helpers.
 
-The installer also creates `~/Applications/Doc Reader.app` with the native app
+The installer also creates `~/Applications/Read Docs.app` with the native app
 icon and registers it with Launch Services. You can launch it from Applications,
 Spotlight, or the Dock. The Dock/menu-bar app opens the web page, which is the
 canonical DocReader interface.
@@ -399,7 +399,7 @@ Accessibility, and Input Monitoring state. It also shows whether the native app
 helper is online. Use the in-app `Start Helper`, `Stop Helper`, and `Reset`
 controls to bring the menu-bar hotkey listener up, shut it down, or restart a
 stale helper without leaving the web app. If the HUD does not appear while Doc
-Reader is in the background, allow `Doc Reader.app` in macOS Privacy & Security
+Reader is in the background, allow `Read Docs.app` in macOS Privacy & Security
 for Input Monitoring.
 Accessibility is also required for automatic insertion into the active text
 field; without it, Doc Reader copies the transcription to the clipboard.
@@ -505,8 +505,8 @@ python -m doc_reader.tray
 
 What it gives you:
 
-- Native menu-bar app shell (`Doc Reader.app`) with a formal app icon that opens the canonical web page.
-- Applications/Dock launcher at `~/Applications/Doc Reader.app`.
+- Native menu-bar app shell (`Read Docs.app`) with a formal app icon that opens the canonical web page.
+- Applications/Dock launcher at `~/Applications/Read Docs.app`.
 - Tailnet web app through `read-docs tailscale`.
 - `Open DocReader Page` opens `http://127.0.0.1:8766`.
 - `Read Clipboard in DocReader` posts clipboard text into the web Library.

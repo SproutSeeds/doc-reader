@@ -1,8 +1,10 @@
 """Windows desktop workspace. Qt's browser engine is bundled with the app."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QMainWindow
@@ -43,6 +45,7 @@ class WorkspaceWindow(QMainWindow):
         self.workspace_url = QUrl(url)
         self.loaded = False
         self.setWindowTitle("Read Docs")
+        self.setWindowIcon(QIcon(str(Path(__file__).parent / "icons/read-docs-256.png")))
         self.resize(1000, 780)
         self.setMinimumSize(520, 520)
         self.view = QWebEngineView(self)

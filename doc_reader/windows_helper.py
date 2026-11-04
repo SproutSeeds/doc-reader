@@ -619,21 +619,11 @@ class Recorder:
 
 def _build_icon(recording: bool = False):
     from PySide6.QtCore import Qt
-    from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+    from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 
-    pixmap = QPixmap(32, 32)
-    pixmap.fill(Qt.GlobalColor.transparent)
+    pixmap = QPixmap(str(Path(__file__).parent / "icons/read-docs-32.png"))
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setBrush(QColor("#17201c"))
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.drawRoundedRect(2, 2, 28, 28, 7, 7)
-    pen = QPen(QColor("#f4f8f4"))
-    pen.setWidth(3)
-    painter.setPen(pen)
-    painter.drawLine(9, 11, 23, 11)
-    painter.drawLine(9, 16, 23, 16)
-    painter.drawLine(9, 21, 19, 21)
     if recording:
         painter.setBrush(QColor("#e5484d"))
         painter.setPen(Qt.PenStyle.NoPen)
@@ -670,6 +660,8 @@ def main() -> int:
 
     sys.stdout = _TimestampedLog(sys.stdout)
     app = QApplication(sys.argv)
+    app.setApplicationName("Read Docs")
+    app.setWindowIcon(_build_icon())
     app.setQuitOnLastWindowClosed(False)
     from .workspace_window import WorkspaceWindow
     workspace = WorkspaceWindow(WEB_URL)

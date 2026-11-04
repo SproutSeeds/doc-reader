@@ -5,7 +5,7 @@
 ## Install
 
 Choose Apple silicon, Intel Mac or Windows on the download page. On Mac, open
-the DMG and drag Doc Reader into Applications, then open it there. To identify
+the DMG and drag Read Docs into Applications, then open it there. To identify
 your Mac, open About This Mac: Apple M-series chips use Apple silicon; an Intel
 processor uses Intel Mac. On Windows, run the Setup EXE and choose Open Read Docs.
 

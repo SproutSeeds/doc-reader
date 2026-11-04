@@ -40,7 +40,7 @@ if staged_app.exists():
     raise RuntimeError(f'Refusing to overwrite a staged app: {staged_app}')
 run('ditto', app, staged_app)
 (image_root / 'Applications').symlink_to('/Applications')
-dmg = args.output / f'Doc-Reader-{version}-macOS-{args.target}.dmg'
-run('hdiutil', 'create', '-volname', 'Doc Reader', '-srcfolder', image_root, '-ov', '-format', 'UDZO', dmg)
+dmg = args.output / f'Read-Docs-{version}-macOS-{args.target}.dmg'
+run('hdiutil', 'create', '-volname', 'Read Docs', '-srcfolder', image_root, '-ov', '-format', 'UDZO', dmg)
 run('codesign', '--force', '--timestamp', '--sign', args.identity, dmg)
 print(dmg)

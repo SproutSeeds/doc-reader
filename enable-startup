@@ -10,10 +10,10 @@ APP_DIR="$HOME/.doc-reader-managed"
 RUNNER="$APP_DIR/run-doc-reader"
 VENV_DIR="$APP_DIR/.venv"
 READ_DOCS_HELPER="$APP_DIR/read-docs"
-NATIVE_APP="$APP_DIR/Doc Reader.app"
+NATIVE_APP="$APP_DIR/Read Docs.app"
 NATIVE_EXECUTABLE="$NATIVE_APP/Contents/MacOS/DocReader"
 APPLICATIONS_DIR="$HOME/Applications"
-APPLICATIONS_APP="$APPLICATIONS_DIR/Doc Reader.app"
+APPLICATIONS_APP="$APPLICATIONS_DIR/Read Docs.app"
 APPLICATIONS_EXECUTABLE="$APPLICATIONS_APP/Contents/MacOS/DocReader"
 PROGRAM="$RUNNER"
 PREPARE_MANAGED_ONLY=0
@@ -75,7 +75,7 @@ fi
 if [[ -d "$APPLICATIONS_APP" ]]; then
   EXISTING_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APPLICATIONS_APP/Contents/Info.plist" 2>/dev/null || true)"
   if [[ "$EXISTING_BUNDLE_ID" != "com.sproutseeds.read-docs" ]]; then
-    echo "[doc-reader] Applications app already exists and is not Doc Reader: $APPLICATIONS_APP" >&2
+    echo "[doc-reader] Applications app already exists and is not Read Docs: $APPLICATIONS_APP" >&2
     exit 1
   fi
   rm -rf "$APPLICATIONS_APP"

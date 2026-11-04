@@ -1718,7 +1718,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
             }
             guard !self.dictationCaptureBusy, self.dictationTranscriptionID == nil else { return }
             self.logDictation("selected-text captured app=\(sourceID) method=\(selection.method) chars=\(selection.text.count)")
-            let label = sourceName == "Doc Reader" ? "Selected Text" : "Selection from \(sourceName)"
+            let label = ["Read Docs", "Doc Reader"].contains(sourceName) ? "Selected Text" : "Selection from \(sourceName)"
             self.statusMenuItem.title = "Reading selected text..."
             self.postWebJSON(
                 path: "/api/text",

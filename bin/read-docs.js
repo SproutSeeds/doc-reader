@@ -20,7 +20,7 @@ const launcher = join(packageRoot, "run-doc-reader");
 const isWindows = process.platform === "win32";
 const windowsLauncher = join(packageRoot, "run-doc-reader.ps1");
 const managedRoot = join(homedir(), ".doc-reader-managed");
-const nativeApp = join(managedRoot, "Doc Reader.app");
+const nativeApp = join(managedRoot, "Read Docs.app");
 const nativeExecutable = join(nativeApp, "Contents", "MacOS", "DocReader");
 const launchAgentLabel = "com.docreader.tray";
 const launchAgentPlist = join(homedir(), "Library", "LaunchAgents", `${launchAgentLabel}.plist`);
@@ -28,7 +28,7 @@ const servicesItem = join(homedir(), "Library", "Services", "Read with Doc Reade
 const stdoutLog = join(homedir(), "Library", "Logs", "doc-reader-tray.log");
 const stderrLog = join(homedir(), "Library", "Logs", "doc-reader-tray.err.log");
 const userApplicationsDir = join(homedir(), "Applications");
-const applicationsApp = join(userApplicationsDir, "Doc Reader.app");
+const applicationsApp = join(userApplicationsDir, "Read Docs.app");
 const webPort = Number(process.env.DOC_READER_WEB_PORT || 8766);
 const webHost = process.env.DOC_READER_WEB_HOST || "127.0.0.1";
 const webLaunchAgentLabel = "com.docreader.web";
@@ -78,8 +78,8 @@ function usage() {
 macOS app bootstrapper:
   read-docs install          Install/update the managed app agent and Services item
   read-docs start            Start the installed menu-bar agent
-  read-docs open             Open the installed Doc Reader app
-  read-docs dock             Refresh ~/Applications/Doc Reader.app for Dock/Spotlight use
+  read-docs open             Open the installed Read Docs app
+  read-docs dock             Refresh ~/Applications/Read Docs.app for Dock/Spotlight use
   read-docs restart          Refresh the managed copy and restart the agent
   read-docs stop             Stop the running agent without uninstalling it
   read-docs status           Show managed app, LaunchAgent, and Services status
@@ -430,6 +430,7 @@ async function cleanupNativeAppProcesses({ keepLaunchAgent = false } = {}) {
       return false;
     }
     return (
+      entry.command.includes("/Read Docs.app/Contents/MacOS/DocReader") ||
       entry.command.includes("/Doc Reader.app/Contents/MacOS/DocReader") ||
       entry.command.includes("/DocReader.app/Contents/MacOS/DocReader")
     );
@@ -540,7 +541,7 @@ function installApplicationsApp() {
     } else if (existing?.isDirectory()) {
       const existingBundleId = bundleIdentifier(applicationsApp);
       if (existingBundleId !== "com.sproutseeds.read-docs") {
-        console.error(`[doc-reader] Applications app already exists and is not Doc Reader: ${applicationsApp}`);
+        console.error(`[doc-reader] Applications app already exists and is not Read Docs: ${applicationsApp}`);
         return 1;
       }
       rmSync(applicationsApp, { recursive: true, force: true });
@@ -1386,7 +1387,7 @@ async function exposeWebOnTailscale() {
 
 function status() {
   const lines = [
-    "Doc Reader app status",
+    "Read Docs app status",
     `Platform: ${process.platform === "darwin" ? "macOS" : process.platform}`,
     `Managed app: ${existsSync(managedRoot) ? "installed" : "missing"} (${managedRoot})`,
     `Native shell: ${existsSync(nativeExecutable) ? "installed" : "missing"} (${nativeApp})`,

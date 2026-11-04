@@ -29,9 +29,9 @@ def main() -> None:
     windows = sys.platform == "win32"
     if not windows:
         run("bash", ROOT / "build-macos-app", output)
-        payload = output / "Doc Reader.app" / "Contents" / "Resources"
+        payload = output / "Read Docs.app" / "Contents" / "Resources"
     else:
-        payload = output / "Doc Reader"
+        payload = output / "Read Docs"
         payload.mkdir(exist_ok=True)
     runtime = payload / "runtime"
     if not runtime.exists():

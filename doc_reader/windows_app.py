@@ -422,13 +422,13 @@ def _special_folder(name: str) -> Path:
 
 def _launcher_shortcuts() -> list[Path]:
     return [
-        _special_folder("Desktop") / STARTUP_SHORTCUT_NAME,
-        _special_folder("StartMenu") / "Programs" / STARTUP_SHORTCUT_NAME,
+        _special_folder("Desktop") / "Read Docs.lnk",
+        _special_folder("StartMenu") / "Programs" / "Read Docs.lnk",
     ]
 
 
 def install_shortcuts() -> int:
-    """Put a clickable Doc Reader on the Desktop and in the Start menu."""
+    """Put a clickable Read Docs on the Desktop and in the Start menu."""
     if not IS_WINDOWS:
         print("[doc-reader] install-shortcuts is a Windows command.")
         return 1
@@ -437,7 +437,7 @@ def install_shortcuts() -> int:
         error = _create_shortcut(
             shortcut,
             "-m doc_reader.windows_app open",
-            "Doc Reader: read documents aloud and dictate anywhere (starts the services if needed)",
+            "Read Docs: read documents aloud and dictate anywhere (starts the services if needed)",
         )
         if error:
             print(f"[doc-reader] Could not create {shortcut}: {error}")
@@ -638,7 +638,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="Show service health")
     sub.add_parser("doctor", help="Check Python, CUDA, Kokoro, ffmpeg, espeak, microphone")
     sub.add_parser("open", help="Open the web app (starting services if needed)")
-    sub.add_parser("install-shortcuts", help="Put a clickable Doc Reader on the Desktop and in the Start menu")
+    sub.add_parser("install-shortcuts", help="Put a clickable Read Docs on the Desktop and in the Start menu")
     sub.add_parser("remove-shortcuts", help="Remove the Desktop and Start menu shortcuts")
     sub.add_parser("enable-startup", help="Start Doc Reader automatically at login")
     sub.add_parser("disable-startup", help="Remove the login startup shortcut")

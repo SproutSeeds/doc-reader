@@ -8,7 +8,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_ROOT="${1:-$HOME/.doc-reader-managed}"
-APP_BUNDLE="$APP_ROOT/Doc Reader.app"
+APP_BUNDLE="$APP_ROOT/Read Docs.app"
 CONTENTS="$APP_BUNDLE/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
@@ -62,6 +62,8 @@ cat > "$INFO_PLIST" <<PLIST
     <string>6.0</string>
     <key>CFBundleIconFile</key>
     <string>DocReaderIcon</string>
+    <key>CFBundleDisplayName</key>
+    <string>Read Docs</string>
     <key>CFBundleName</key>
     <string>Read Docs</string>
     <key>CFBundlePackageType</key>
@@ -77,11 +79,11 @@ cat > "$INFO_PLIST" <<PLIST
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Doc Reader records microphone audio when you start local speech-to-text dictation.</string>
+    <string>Read Docs records microphone audio when you start local speech-to-text dictation.</string>
     <key>NSInputMonitoringUsageDescription</key>
-    <string>Doc Reader watches the Option key for opt-in hold-to-record dictation.</string>
+    <string>Read Docs watches the Option key for opt-in hold-to-record dictation.</string>
     <key>NSAccessibilityUsageDescription</key>
-    <string>Doc Reader inserts completed dictation into the active text field when you enable automatic insertion.</string>
+    <string>Read Docs inserts completed dictation into the active text field when you enable automatic insertion.</string>
   </dict>
 </plist>
 PLIST
@@ -95,7 +97,7 @@ if [[ -f "$ICON_SOURCE" ]]; then
   fi
   ICON_TMP="$(mktemp -d "${TMPDIR:-/tmp}/doc-reader-icon.XXXXXX")"
   trap 'rm -rf "${ICON_TMP:-}"' EXIT
-  swift "$ICON_SOURCE" "$ICON_TMP/DocReaderIcon.iconset"
+  swift "$ICON_SOURCE" "$ICON_TMP/DocReaderIcon.iconset" "$SCRIPT_DIR/doc_reader/icons/read-docs-1024.png"
   iconutil -c icns "$ICON_TMP/DocReaderIcon.iconset" -o "$ICON_ICNS"
   echo "[doc-reader] Built native app icon: $ICON_ICNS"
 fi
