@@ -37,8 +37,11 @@ def restore_vendor_libraries(runtime: Path, cache: Path) -> None:
                 (runtime / name).write_bytes(stream.read())
     powershell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
     script = "$ErrorActionPreference='Stop'; $files=[Console]::In.ReadToEnd() | ConvertFrom-Json; foreach($file in $files) { $s=Get-AuthenticodeSignature -LiteralPath $file; if($s.Status -ne 'Valid') {throw ('Vendor signature invalid: '+$file)}; Write-Output ('Verified vendor: '+$s.SignerCertificate.GetNameInfo('SimpleName',$false)+' / '+[IO.Path]::GetFileName($file)) }"
+    # PowerShell 7 CI exports its own module search path, which is incompatible
+    # with the OS PowerShell 5 security module. Let this child use its defaults.
+    env = {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}
     subprocess.run([str(powershell), "-NoProfile", "-NonInteractive", "-Command", script],
-                   input=json.dumps([str(runtime / name) for name in FILES]), text=True, check=True)
+                   input=json.dumps([str(runtime / name) for name in FILES]), text=True, check=True, env=env)
 
 
 if __name__ == "__main__":
