@@ -55,6 +55,9 @@ def main() -> None:
         for path in (runtime / "bin").iterdir():
             if path.is_file() and not path.is_symlink() and path.read_bytes()[:2] == b"#!":
                 path.unlink()
+        for path in (runtime / "bin").iterdir():
+            if path.is_symlink() and not path.exists():
+                path.unlink()
     if windows:
         compiler = Path(os.environ["WINDIR"]) / "Microsoft.NET/Framework64/v4.0.30319/csc.exe"
         run(compiler, "/nologo", "/target:winexe", f"/out:{payload / 'DocReader.exe'}",

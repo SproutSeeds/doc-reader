@@ -36,7 +36,7 @@ fi
 mkdir -p "$MACOS" "$RESOURCES"
 
 swiftc \
-  -target "$(uname -m)-apple-macosx13.0" \
+  -target "${DOC_READER_BUILD_ARCH:-$(uname -m)}-apple-macosx13.0" \
   -swift-version 5 \
   -O \
   -framework AppKit \

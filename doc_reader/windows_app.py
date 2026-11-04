@@ -199,6 +199,7 @@ def _spawn(name: str) -> int:
         stderr=subprocess.STDOUT,
         close_fds=True,
         creationflags=creationflags,
+        start_new_session=not IS_WINDOWS,
     )
     log_handle.close()
     _write_pid(name, process.pid)

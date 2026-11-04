@@ -33,6 +33,17 @@ jobs:
           DOC_READER_CODESIGN_IDENTITY: '-'
           TMPDIR: ${{ runner.temp }}
           UV_CACHE_DIR: ${{ runner.temp }}/uv-cache
+      - name: Verify actual Kokoro and Whisper audio
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            "build/desktop/Doc Reader/runtime/python.exe" packaging/smoke_speech.py
+          else
+            "build/desktop/Doc Reader.app/Contents/Resources/runtime/bin/python3" packaging/smoke_speech.py
+          fi
+        env:
+          HF_HOME: ${{ runner.temp }}/doc-reader-models
+          PYTHONDONTWRITEBYTECODE: '1'
       - name: Package macOS app for release signing
         if: runner.os == 'macOS'
         run: ditto -c -k --sequesterRsrc --keepParent "build/desktop/Doc Reader.app" "Doc-Reader-${{ matrix.target }}.zip"

@@ -1,5 +1,29 @@
 # Release Checklist
 
+## 0.6.0 desktop preview
+
+Adds downloadable Apple silicon and Intel Mac apps and a per-user Windows x64
+installer. Each contains a relocatable Python runtime, Kokoro, faster-whisper,
+English text processing, eSpeak and FFmpeg. The Mac helper starts bundled
+services and opens the workspace without Node or a developer environment. The
+Windows installer adds a Start menu shortcut and preserves user data on removal.
+
+Corrects Whisper's availability status before its lazy model load, sets an
+explicit macOS 13 deployment target, and uses compatible microphone discovery
+on macOS 13. Native startup remains responsive while services launch, and
+packaged Mac services stop with the helper through owned process groups.
+
+Build with `python packaging/build_desktop.py --output build/desktop` on the
+target platform. `Desktop installers` CI verifies dependency imports, isolated
+web/speech health, actual Kokoro-to-Whisper audio, and Windows silent install.
+Mac archives require Developer ID signing and Apple notarization before public
+distribution. Retain notarization receipts, platform/architecture checks and
+SHA-256 sums with the release. Windows binaries remain explicitly labeled
+unsigned previews until a Windows signing identity is available.
+
+The speech models and npm workflow are retained. Physical microphone, hotkey,
+text insertion and sleep/wake testing remain separate acceptance checks.
+
 ## 0.5.2
 
 `0.5.2` keeps Terminal selection tracking intact when scrolling during a drag or

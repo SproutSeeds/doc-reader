@@ -35,6 +35,28 @@ Maintained by SproutSeeds. Research stewardship: Fractal Research Group ([frg.ea
 
 ## Platform support
 
+## Desktop downloads (0.6.0 preview)
+
+[Download Doc Reader for Mac or Windows](https://frg.earth/read-docs).
+Choose Apple silicon, Intel Mac, or Windows x64. Mac users drag the app into
+Applications; Windows users run the installer. Python, speech dependencies,
+FFmpeg and eSpeak are included. Node, npm, a terminal and developer tools are
+unnecessary for these downloads. Speech models download on first use.
+
+The desktop preview uses Kokoro 82M (`af_heart`) for reading and multilingual
+Whisper for dictation (`base` on Mac, `small` on Windows), running on CPU. It
+defaults to English. Other Whisper languages and Kokoro's eSpeak-backed
+languages are available; Japanese and Chinese TTS extras, Pocket, Kitten and GPU
+setup remain advanced source/npm installation options. Existing libraries and
+settings stay in the user's `.doc-reader-managed` folder.
+
+The Mac downloads require macOS 13+. Windows requires 64-bit Windows 10/11. The
+Windows preview installer is unsigned and may show an unknown-publisher warning.
+Automated installer, service and speech checks are separate from physical
+microphone, global-shortcut, clipboard-insertion and sleep/wake acceptance.
+
+## Source and npm platform support
+
 - **macOS**: menu-bar app, login agent, Right Command / Command-L selection
   hotkey, Option hold-to-dictate, and the right-click Services item.
 - **Windows 10/11**: system-tray helper, Ctrl+Alt+R selection hotkey, Right Ctrl
