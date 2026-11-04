@@ -10,8 +10,9 @@ your Mac, open About This Mac: Apple M-series chips use Apple silicon; an Intel
 processor uses Intel Mac. On Windows, run the Setup EXE and choose Open Read Docs.
 
 Mac requires macOS 13 or later. Windows requires 64-bit Windows 10 or 11 on an
-Intel or AMD PC. The Windows preview is unsigned, so Windows may show an
-unknown-publisher warning. Follow your computer's security policy; the Mac
+Intel or AMD PC. The Windows publisher is FRACTAL RESEARCH GROUP LLC. The
+installer and its executable payload are signed; new releases can still receive
+a SmartScreen reputation warning. Follow your computer's security policy. Mac
 downloads are signed and Apple-notarized.
 
 The app includes the speech engines, English reading voices and multilingual

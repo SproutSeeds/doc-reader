@@ -1,5 +1,22 @@
 # Release Checklist
 
+## 0.7.3 Windows signing and installed-app checks
+
+Windows release builds use Microsoft Artifact Signing for the launcher, unsigned
+bundled EXE/DLL/PYD files, setup, temporary setup copies and uninstaller. Existing
+valid vendor signatures remain intact. Every signature is verified, new
+signatures are timestamped, and unsigned CI staging files explicitly contain
+`UNSIGNED` in their filenames. See [Windows release signing](packaging/WINDOWS-SIGNING.md).
+
+The installed EXE is exercised with a clean profile, empty model cache, offline
+model flags and a restricted system PATH. It must launch all services, reopen
+without duplicate helpers, retain preferences, restart and stop its own services.
+Windows PowerShell now resolves from the OS directory, fixing lost service
+ownership when PowerShell is absent from PATH. Physical microphone, speaker,
+global-shortcut, cross-app paste and sleep/wake checks remain separate.
+
+This is a Windows-only patch (`v0.7.3-windows`). Mac downloads remain 0.7.2.
+
 ## 0.7.0 standalone desktop preview
 
 The shared workspace opens inside WKWebView on macOS and Qt WebEngine on Windows.

@@ -280,6 +280,13 @@ def _matches_service(arguments: list[str], module: str, marker: str) -> bool:
     return len(arguments) >= 5 and arguments[1:5] == ["-X", marker, "-m", module]
 
 
+def _powershell() -> str:
+    # The installed app must not depend on the user's PATH containing PowerShell.
+    # Missing process inventory would lose ownership and create duplicate helpers.
+    return str(Path(os.environ.get("SystemRoot", r"C:\Windows")) /
+               "System32/WindowsPowerShell/v1.0/powershell.exe")
+
+
 def _find_stray_pids(module: str) -> list[int]:
     """Find this data folder's own service processes even when the PID file is missing.
 
@@ -310,7 +317,7 @@ def _find_stray_pids(module: str) -> list[int]:
     )
     try:
         result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            [_powershell(), "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True,
             text=True,
             timeout=15,
@@ -390,7 +397,7 @@ def _create_shortcut(shortcut: Path, arguments: str, description: str) -> str:
         + "$s.Save()"
     )
     result = subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+        [_powershell(), "-NoProfile", "-NonInteractive", "-Command", script],
         capture_output=True,
         text=True,
         check=False,
@@ -405,7 +412,7 @@ def _special_folder(name: str) -> Path:
     """Resolve a Windows shell folder (Desktop may live under OneDrive)."""
     try:
         result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", f"[Environment]::GetFolderPath('{name}')"],
+            [_powershell(), "-NoProfile", "-NonInteractive", "-Command", f"[Environment]::GetFolderPath('{name}')"],
             capture_output=True,
             text=True,
             check=False,

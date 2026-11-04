@@ -33,7 +33,7 @@ Maintained by SproutSeeds. Research stewardship: Fractal Research Group ([frg.ea
 - Supports pause/resume, active-field dictation insertion, and selectable speech
   backends.
 
-## Desktop downloads (0.7.2 preview)
+## Desktop downloads (Windows 0.7.3; Mac 0.7.2 preview)
 
 [Download Read Docs for Mac or Windows](https://frg.earth/read-docs).
 [Installation and first-use help](docs/desktop-guide.md).
@@ -57,7 +57,9 @@ setup remain advanced source/npm installation options. Existing libraries and
 settings stay in the user's `.doc-reader-managed` folder.
 
 The Mac downloads require macOS 13+. Windows requires 64-bit Windows 10/11. The
-Windows preview installer is unsigned and may show an unknown-publisher warning.
+Windows installer and bundled executables are signed; the publisher is
+FRACTAL RESEARCH GROUP LLC. New releases can still trigger SmartScreen reputation
+warnings. Mac downloads are signed and Apple-notarized.
 Automated installer, service and speech checks are separate from physical
 microphone, global-shortcut, clipboard-insertion and sleep/wake acceptance.
 

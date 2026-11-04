@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.7.2"
+  #define AppVersion "0.7.3"
 #endif
 #ifndef Payload
   #define Payload "..\build\desktop\Read Docs"
@@ -17,7 +17,13 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
+#ifdef SignRelease
 OutputBaseFilename=Read-Docs-{#AppVersion}-Windows-x64-Setup
+SignTool=ReadDocs
+SignedUninstaller=yes
+#else
+OutputBaseFilename=Read-Docs-{#AppVersion}-Windows-x64-UNSIGNED-Setup
+#endif
 OutputDir=..\dist
 Compression=lzma2/fast
 SolidCompression=yes

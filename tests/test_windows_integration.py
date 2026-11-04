@@ -66,6 +66,8 @@ class ProcessOwnershipTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {
             "DOC_READER_MANAGED_ROOT": root,
             "DOC_READER_ANALYSIS_ENABLED": "0",
+            # A packaged app must find OS tools without a developer's shell PATH.
+            "PATH": str(Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"),
         }):
             process = subprocess.Popen([
                 sys.executable, "-X", windows_app._root_marker(),

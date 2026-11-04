@@ -1,8 +1,14 @@
 name: Desktop installers
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Platforms to stage for release
+        type: choice
+        options: [all, windows]
+        default: all
   push:
-    tags: ['v*']
+    tags: ['v*', '!v*-windows']
 permissions:
   contents: read
 jobs:
@@ -10,13 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-14
-            target: macOS-Apple-Silicon
-          - os: macos-15-intel
-            target: macOS-Intel
-          - os: windows-latest
-            target: Windows-x64
+        include: ${{ fromJSON(inputs.platform == 'windows' && '[{"os":"windows-latest","target":"Windows-x64"}]' || '[{"os":"macos-14","target":"macOS-Apple-Silicon"},{"os":"macos-15-intel","target":"macOS-Intel"},{"os":"windows-latest","target":"Windows-x64"}]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -71,6 +71,8 @@ jobs:
           $process = Start-Process $installer.FullName -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$destination`"") -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
           & "$destination\runtime\python.exe" packaging/smoke_desktop.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$destination\runtime\python.exe" packaging/smoke_launcher.py "$destination\DocReader.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $shell = New-Object -ComObject WScript.Shell
           $programs = [Environment]::GetFolderPath('Programs')
