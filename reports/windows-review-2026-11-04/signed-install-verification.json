@@ -1,0 +1,19 @@
+{
+  "status": "PASS",
+  "os": "Windows 11 Pro 10.0.26200 x64",
+  "version": "0.7.3",
+  "upgrade": true,
+  "uninstall": true,
+  "cleanInstall": true,
+  "allInstalledPESignaturesValid": true,
+  "installedPECount": 799,
+  "installedPayloadMatchesSigningReceipt": true,
+  "uninstallerSigned": true,
+  "validationDataPreserved": true,
+  "sharedSpeechPreserved": true,
+  "defaultProfileUntouched": true,
+  "startMenuShortcut": true,
+  "installedPath": "%LOCALAPPDATA%\\Programs\\Doc Reader",
+  "session": 0,
+  "physicalAudioAndShortcutTrial": "pending interactive user"
+}

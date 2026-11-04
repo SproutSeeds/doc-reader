@@ -1,0 +1,12 @@
+{
+  "status": "PASS",
+  "checked_at": "2026-11-04T21:57:56.965508+00:00",
+  "http_status": 200,
+  "url": "https://github.com/SproutSeeds/doc-reader/releases/download/v0.7.3-windows/Read-Docs-0.7.3-Windows-x64-Setup.exe",
+  "bytes": 1325624920,
+  "sha256": "60b2e0de636ec36644b125bc4838993bf9a9d27ed8be1832587ca14423eb7a67",
+  "authentication": "none",
+  "signature_binding": "identical bytes to the Authenticode-verified Windows installer",
+  "published_checksum_matches": true,
+  "first_attempt": "Python stream timed out; full curl retry succeeded in 17.27 seconds"
+}

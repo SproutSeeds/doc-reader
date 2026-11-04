@@ -1,0 +1,303 @@
+{
+  "conclusion": "success",
+  "databaseId": 41916595058,
+  "headSha": "780e7e1e9c30832ee64c83a97ed59f19f9739adc",
+  "jobs": [
+    {
+      "completedAt": "2026-11-04T21:31:10Z",
+      "conclusion": "success",
+      "databaseId": 126877822159,
+      "name": "python (windows-latest)",
+      "startedAt": "2026-11-04T21:29:43Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-11-04T21:29:45Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-11-04T21:29:44Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:29:50Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v7",
+          "number": 2,
+          "startedAt": "2026-11-04T21:29:45Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:29:50Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-python@v7",
+          "number": 3,
+          "startedAt": "2026-11-04T21:29:50Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:30:20Z",
+          "conclusion": "success",
+          "name": "Run python -m pip install -r requirements.txt numpy",
+          "number": 4,
+          "startedAt": "2026-11-04T21:29:50Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:30:48Z",
+          "conclusion": "success",
+          "name": "Run python -m unittest discover -s tests -v",
+          "number": 5,
+          "startedAt": "2026-11-04T21:30:20Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:30:54Z",
+          "conclusion": "success",
+          "name": "Windows launcher without uv or py",
+          "number": 6,
+          "startedAt": "2026-11-04T21:30:48Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:30:54Z",
+          "conclusion": "skipped",
+          "name": "Build macOS application",
+          "number": 7,
+          "startedAt": "2026-11-04T21:30:54Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:30:54Z",
+          "conclusion": "skipped",
+          "name": "Install FFmpeg for native capture test",
+          "number": 8,
+          "startedAt": "2026-11-04T21:30:54Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:30:54Z",
+          "conclusion": "skipped",
+          "name": "Test native macOS capture",
+          "number": 9,
+          "startedAt": "2026-11-04T21:30:54Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:31:01Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-node@v7",
+          "number": 10,
+          "startedAt": "2026-11-04T21:30:54Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:31:01Z",
+          "conclusion": "success",
+          "name": "Run node --check bin/read-docs.js",
+          "number": 11,
+          "startedAt": "2026-11-04T21:31:01Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:31:02Z",
+          "conclusion": "success",
+          "name": "Run node --test tests/process-targets.test.js",
+          "number": 12,
+          "startedAt": "2026-11-04T21:31:01Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:31:06Z",
+          "conclusion": "success",
+          "name": "Run npm pack --dry-run",
+          "number": 13,
+          "startedAt": "2026-11-04T21:31:02Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:31:06Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-node@v7",
+          "number": 24,
+          "startedAt": "2026-11-04T21:31:06Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:31:06Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-python@v7",
+          "number": 25,
+          "startedAt": "2026-11-04T21:31:06Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:31:08Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v7",
+          "number": 26,
+          "startedAt": "2026-11-04T21:31:06Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:31:08Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 27,
+          "startedAt": "2026-11-04T21:31:08Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/SproutSeeds/doc-reader/actions/runs/41916595058/job/126877822159"
+    },
+    {
+      "completedAt": "2026-11-04T21:34:08Z",
+      "conclusion": "success",
+      "databaseId": 126877822703,
+      "name": "python (macos-15-intel)",
+      "startedAt": "2026-11-04T21:29:44Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-11-04T21:29:51Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-11-04T21:29:46Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:29:54Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v7",
+          "number": 2,
+          "startedAt": "2026-11-04T21:29:51Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:29:54Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-python@v7",
+          "number": 3,
+          "startedAt": "2026-11-04T21:29:54Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:30:43Z",
+          "conclusion": "success",
+          "name": "Run python -m pip install -r requirements.txt numpy",
+          "number": 4,
+          "startedAt": "2026-11-04T21:29:54Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:31:45Z",
+          "conclusion": "success",
+          "name": "Run python -m unittest discover -s tests -v",
+          "number": 5,
+          "startedAt": "2026-11-04T21:30:44Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:31:45Z",
+          "conclusion": "skipped",
+          "name": "Windows launcher without uv or py",
+          "number": 6,
+          "startedAt": "2026-11-04T21:31:45Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:33:12Z",
+          "conclusion": "success",
+          "name": "Build macOS application",
+          "number": 7,
+          "startedAt": "2026-11-04T21:31:45Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:33:30Z",
+          "conclusion": "success",
+          "name": "Install FFmpeg for native capture test",
+          "number": 8,
+          "startedAt": "2026-11-04T21:33:12Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:33:58Z",
+          "conclusion": "success",
+          "name": "Test native macOS capture",
+          "number": 9,
+          "startedAt": "2026-11-04T21:33:30Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:34:00Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-node@v7",
+          "number": 10,
+          "startedAt": "2026-11-04T21:33:58Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:34:00Z",
+          "conclusion": "success",
+          "name": "Run node --check bin/read-docs.js",
+          "number": 11,
+          "startedAt": "2026-11-04T21:34:00Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:34:01Z",
+          "conclusion": "success",
+          "name": "Run node --test tests/process-targets.test.js",
+          "number": 12,
+          "startedAt": "2026-11-04T21:34:00Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:34:03Z",
+          "conclusion": "success",
+          "name": "Run npm pack --dry-run",
+          "number": 13,
+          "startedAt": "2026-11-04T21:34:01Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:34:03Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-node@v7",
+          "number": 24,
+          "startedAt": "2026-11-04T21:34:03Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:34:04Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-python@v7",
+          "number": 25,
+          "startedAt": "2026-11-04T21:34:03Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:34:05Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v7",
+          "number": 26,
+          "startedAt": "2026-11-04T21:34:04Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:34:06Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 27,
+          "startedAt": "2026-11-04T21:34:05Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/SproutSeeds/doc-reader/actions/runs/41916595058/job/126877822703"
+    }
+  ],
+  "status": "completed",
+  "url": "https://github.com/SproutSeeds/doc-reader/actions/runs/41916595058"
+}

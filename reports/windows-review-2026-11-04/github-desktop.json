@@ -1,0 +1,140 @@
+{
+  "conclusion": "success",
+  "databaseId": 41916638117,
+  "headSha": "780e7e1e9c30832ee64c83a97ed59f19f9739adc",
+  "jobs": [
+    {
+      "completedAt": "2026-11-04T21:40:58Z",
+      "conclusion": "success",
+      "databaseId": 126877978619,
+      "name": "build (windows-latest, Windows-x64)",
+      "startedAt": "2026-11-04T21:30:01Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-11-04T21:30:03Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-11-04T21:30:02Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:30:08Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v7",
+          "number": 2,
+          "startedAt": "2026-11-04T21:30:03Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:30:10Z",
+          "conclusion": "success",
+          "name": "Run astral-sh/setup-uv@v6",
+          "number": 3,
+          "startedAt": "2026-11-04T21:30:08Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:30:10Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-python@v7",
+          "number": 4,
+          "startedAt": "2026-11-04T21:30:10Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:31:22Z",
+          "conclusion": "success",
+          "name": "Build and verify bundled runtime",
+          "number": 5,
+          "startedAt": "2026-11-04T21:30:10Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:31:39Z",
+          "conclusion": "success",
+          "name": "Verify actual Kokoro and Whisper audio",
+          "number": 6,
+          "startedAt": "2026-11-04T21:31:22Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:31:39Z",
+          "conclusion": "skipped",
+          "name": "Package macOS app for release signing",
+          "number": 7,
+          "startedAt": "2026-11-04T21:31:39Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:31:47Z",
+          "conclusion": "success",
+          "name": "Verify packaged Windows app window",
+          "number": 8,
+          "startedAt": "2026-11-04T21:31:39Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:34:49Z",
+          "conclusion": "success",
+          "name": "Build Windows installer",
+          "number": 9,
+          "startedAt": "2026-11-04T21:31:47Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:40:07Z",
+          "conclusion": "success",
+          "name": "Verify Windows installer on a clean profile",
+          "number": 10,
+          "startedAt": "2026-11-04T21:34:49Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:40:49Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 11,
+          "startedAt": "2026-11-04T21:40:07Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:40:49Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-python@v7",
+          "number": 20,
+          "startedAt": "2026-11-04T21:40:49Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:40:49Z",
+          "conclusion": "success",
+          "name": "Post Run astral-sh/setup-uv@v6",
+          "number": 21,
+          "startedAt": "2026-11-04T21:40:49Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:40:52Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v7",
+          "number": 22,
+          "startedAt": "2026-11-04T21:40:49Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-04T21:40:52Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 23,
+          "startedAt": "2026-11-04T21:40:52Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/SproutSeeds/doc-reader/actions/runs/41916638117/job/126877978619"
+    }
+  ],
+  "status": "completed",
+  "url": "https://github.com/SproutSeeds/doc-reader/actions/runs/41916638117"
+}

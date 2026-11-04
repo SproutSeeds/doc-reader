@@ -1,0 +1,1 @@
+60b2e0de636ec36644b125bc4838993bf9a9d27ed8be1832587ca14423eb7a67  Read-Docs-0.7.3-Windows-x64-Setup.exe

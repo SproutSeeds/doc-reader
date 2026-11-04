@@ -1,0 +1,29 @@
+{
+  "scope": "Windows 0.7.3 signing, process ownership repair and release verification",
+  "source_commit": "780e7e1e9c30832ee64c83a97ed59f19f9739adc",
+  "buckets": [
+    {
+      "paths": [
+        "reports/windows-review-2026-11-04/"
+      ],
+      "status": "owned sanitized release evidence checkpointed; raw draft/hygiene receipts retained locally",
+      "next_action": "Retain local raw diagnostics and signed release cache for recovery; future changes use a new immutable release."
+    },
+    {
+      "paths": [
+        "docs/design-notes/icon-studies-2026-11-04/",
+        "reports/app-design-2026-11-03/",
+        "reports/branding-2026-11-04/",
+        "reports/desktop-release-2026-11-03/",
+        "reports/doc-reader-audit-2026-09-08/",
+        "reports/readback-audit-2026-09-25/",
+        "reports/release-2026-09-25/",
+        "reports/self-serve-2026-11-04/",
+        "reports/standalone-2026-11-04/",
+        "reports/windows-contribution-2026-09-22/"
+      ],
+      "status": "existing classified local evidence preserved",
+      "next_action": "Retain for regression comparison and provenance; do not sweep into this release."
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "version": "0.7.3",
+  "artifact": "Read-Docs-0.7.3-Windows-x64-Setup.exe",
+  "sha256": "60b2e0de636ec36644b125bc4838993bf9a9d27ed8be1832587ca14423eb7a67",
+  "bytes": 1325624920,
+  "publisher": "FRACTAL RESEARCH GROUP LLC.",
+  "timestamp": true,
+  "payloadFiles": 798,
+  "newPayloadSignatures": 363,
+  "preservedSignatures": 435,
+  "provider": "Microsoft Artifact Signing"
+}

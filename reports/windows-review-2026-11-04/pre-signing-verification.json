@@ -1,0 +1,39 @@
+{
+  "local_python": {
+    "status": "PASS",
+    "tests": 100,
+    "skipped": 4
+  },
+  "windows11_python": {
+    "status": "PASS",
+    "tests": 100,
+    "skipped": 1
+  },
+  "windows11_offline_speech": {
+    "status": "PASS",
+    "engines": [
+      "Kokoro",
+      "Whisper small"
+    ],
+    "synthetic_audio_seconds": 5.15,
+    "sample_rate": 24000,
+    "model_network": "disabled with empty caches",
+    "transcript": "DocReader reads documents aloud. You can also dictate your thoughts into text."
+  },
+  "windows11_native_window": {
+    "status": "PASS",
+    "engine": "Qt WebEngine",
+    "image": "windows11-setup.png",
+    "scope": "isolated setup, SSH session 0"
+  },
+  "node_process_targets": {
+    "status": "PASS",
+    "tests": 2
+  },
+  "npm_pack_dry_run": "PASS",
+  "frg_tests": {
+    "status": "PASS",
+    "tests": 382
+  },
+  "physical_mic_speaker_global_shortcuts_cross_app_insertion_sleep_wake": "not run"
+}

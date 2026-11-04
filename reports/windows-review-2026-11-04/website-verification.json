@@ -1,0 +1,536 @@
+{
+  "status": "PASS",
+  "download_page": "https://frg.earth/read-docs",
+  "deployment": {
+    "status": "PASS",
+    "checked_at": "2026-11-04T21:51:58.879Z",
+    "deployment": {
+      "id": "dpl_E1b3yZY1CMRYfyX1r58kFqwUZCiu",
+      "url": "frg-earth-hu5rtbga6-sproutseeds-projects-50ab03d8.vercel.app",
+      "projectId": "prj_DlXq9avtfb85vz3IKimTxzbDHZ5N",
+      "target": "production",
+      "readyState": "READY",
+      "createdAt": 1793828938870,
+      "ready": 1793828997923,
+      "alias": []
+    },
+    "previous": "dpl_GDj5NFrnm2f8Mo8V43ThW5SPSMh4",
+    "source_files": 784,
+    "changed_paths": [
+      "src/public/read-docs/app.js",
+      "src/public/read-docs/index.html",
+      "src/public/read-docs/releases.json"
+    ],
+    "unrelated_source_bytes_preserved": true
+  },
+  "live": {
+    "status": "PASS",
+    "checked_at": "2026-11-04T21:59:04.411Z",
+    "deployment": {
+      "id": "dpl_E1b3yZY1CMRYfyX1r58kFqwUZCiu",
+      "url": "frg-earth-hu5rtbga6-sproutseeds-projects-50ab03d8.vercel.app",
+      "projectId": "prj_DlXq9avtfb85vz3IKimTxzbDHZ5N",
+      "target": "production",
+      "readyState": "READY",
+      "createdAt": 1793828938870,
+      "ready": 1793828997923,
+      "alias": []
+    },
+    "routes": [
+      {
+        "path": "/",
+        "status": 200,
+        "type": "text/html; charset=utf-8",
+        "hash": "9164fb7ef06fd26e5c752ecafe7f8e36d06a356322adc4e4c5be73a3d2801e01"
+      },
+      {
+        "path": "/greetings",
+        "status": 200,
+        "type": "text/html; charset=utf-8",
+        "hash": "9164fb7ef06fd26e5c752ecafe7f8e36d06a356322adc4e4c5be73a3d2801e01"
+      },
+      {
+        "path": "/songs",
+        "status": 200,
+        "type": "text/html; charset=utf-8",
+        "hash": "9164fb7ef06fd26e5c752ecafe7f8e36d06a356322adc4e4c5be73a3d2801e01"
+      },
+      {
+        "path": "/pay/verraci",
+        "status": 200,
+        "type": "text/html; charset=utf-8",
+        "hash": "9164fb7ef06fd26e5c752ecafe7f8e36d06a356322adc4e4c5be73a3d2801e01"
+      },
+      {
+        "path": "/resume/cody-mitchell-resume.pdf",
+        "status": 200,
+        "type": "application/pdf",
+        "hash": "33375e596131453b8e0453bb8614d6b496f8fe33ec67f12420b2b62c9c8b647f"
+      },
+      {
+        "path": "/read-docs/style.css",
+        "status": 200,
+        "type": "text/css; charset=utf-8",
+        "hash": "9f553ccfb701d837134c32f60a098407f06fa099704c70d680f23da09af836ea"
+      },
+      {
+        "path": "/read-docs/releases.json",
+        "status": 200,
+        "hash": "5c316210c987959c18db47b516cf198d7b1f76861a2751f27a8c4f65dd52e8db"
+      },
+      {
+        "path": "/read-docs/index.html",
+        "status": 200,
+        "hash": "66fc4c5eccda5765d6cd2bd49552d1d8201fa15044716d1fe5374727fe13612e"
+      },
+      {
+        "path": "/read-docs/app.js",
+        "status": 200,
+        "hash": "43614d11737b503d95eac80bca07fd553d2931f6894671698893bb062c43753b"
+      },
+      {
+        "host": "frg.earth",
+        "path": "/read-docs",
+        "status": 200
+      },
+      {
+        "host": "frg.earth",
+        "path": "/read-docs/",
+        "status": 200
+      },
+      {
+        "host": "www.frg.earth",
+        "path": "/read-docs",
+        "status": 200
+      },
+      {
+        "host": "www.frg.earth",
+        "path": "/read-docs/",
+        "status": 200
+      }
+    ]
+  },
+  "browser": {
+    "base": "https://frg.earth",
+    "checked_at": "2026-11-04T21:59:36.185Z",
+    "viewports": [
+      {
+        "height": 1000,
+        "width": 1440,
+        "scroll": 1440,
+        "bodyHeight": 1000,
+        "paragraphs": 0,
+        "controls": [
+          {
+            "text": "FRG",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "GitHub",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Info",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Apple silicon",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Intel Mac",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Windows",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Download",
+            "height": 82.796875,
+            "cursor": "pointer"
+          }
+        ]
+      },
+      {
+        "height": 1080,
+        "width": 1920,
+        "scroll": 1920,
+        "bodyHeight": 1080,
+        "paragraphs": 0,
+        "controls": [
+          {
+            "text": "FRG",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "GitHub",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Info",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Apple silicon",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Intel Mac",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Windows",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Download",
+            "height": 82.796875,
+            "cursor": "pointer"
+          }
+        ]
+      },
+      {
+        "height": 768,
+        "width": 1024,
+        "scroll": 1024,
+        "bodyHeight": 768,
+        "paragraphs": 0,
+        "controls": [
+          {
+            "text": "FRG",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "GitHub",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Info",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Apple silicon",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Intel Mac",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Windows",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Download",
+            "height": 82,
+            "cursor": "pointer"
+          }
+        ]
+      },
+      {
+        "height": 1024,
+        "width": 768,
+        "scroll": 768,
+        "bodyHeight": 1024,
+        "paragraphs": 0,
+        "controls": [
+          {
+            "text": "FRG",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "GitHub",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Info",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Apple silicon",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Intel Mac",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Windows",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Download",
+            "height": 82,
+            "cursor": "pointer"
+          }
+        ]
+      },
+      {
+        "height": 850,
+        "width": 760,
+        "scroll": 760,
+        "bodyHeight": 850,
+        "paragraphs": 0,
+        "controls": [
+          {
+            "text": "FRG",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "GitHub",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Info",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Apple silicon",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Intel Mac",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Windows",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Download",
+            "height": 82,
+            "cursor": "pointer"
+          }
+        ]
+      },
+      {
+        "height": 844,
+        "width": 390,
+        "scroll": 390,
+        "bodyHeight": 844,
+        "paragraphs": 0,
+        "controls": [
+          {
+            "text": "FRG",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "GitHub",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Info",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Apple silicon",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Intel Mac",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Windows",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Download",
+            "height": 82,
+            "cursor": "pointer"
+          }
+        ]
+      },
+      {
+        "height": 568,
+        "width": 320,
+        "scroll": 320,
+        "bodyHeight": 612,
+        "paragraphs": 0,
+        "controls": [
+          {
+            "text": "FRG",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "GitHub",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Info",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Apple silicon",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Intel Mac",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Windows",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Download",
+            "height": 82,
+            "cursor": "pointer"
+          }
+        ]
+      },
+      {
+        "height": 450,
+        "width": 720,
+        "scroll": 720,
+        "bodyHeight": 742,
+        "paragraphs": 0,
+        "controls": [
+          {
+            "text": "FRG",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "GitHub",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Info",
+            "height": 44,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Apple silicon",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Intel Mac",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Windows",
+            "height": 47,
+            "cursor": "pointer"
+          },
+          {
+            "text": "Download",
+            "height": 82,
+            "cursor": "pointer"
+          }
+        ]
+      }
+    ],
+    "errors": [],
+    "platforms": [
+      {
+        "name": "mac-arm64",
+        "url": "https://github.com/SproutSeeds/doc-reader/releases/download/v0.7.2/Read-Docs-0.7.2-macOS-Apple-Silicon.dmg",
+        "details": "Desktop preview \u00b7 Signed and Apple-notarized"
+      },
+      {
+        "name": "mac-x64",
+        "url": "https://github.com/SproutSeeds/doc-reader/releases/download/v0.7.2/Read-Docs-0.7.2-macOS-Intel.dmg",
+        "details": "Desktop preview \u00b7 Signed and Apple-notarized"
+      },
+      {
+        "name": "windows-x64",
+        "url": "https://github.com/SproutSeeds/doc-reader/releases/download/v0.7.3-windows/Read-Docs-0.7.3-Windows-x64-Setup.exe",
+        "details": "Signed by FRACTAL RESEARCH GROUP LLC. New releases may still receive a SmartScreen reputation warning."
+      }
+    ],
+    "checks": [
+      "Read Docs identity, GitHub and npm links",
+      "Download label centered under selector",
+      "Text links have no arrow glyphs, icons, borders, backgrounds or shadows",
+      "No visible paragraphs on canvas",
+      "Touch targets and pointer affordances",
+      "All platform links match the per-platform verified manifest",
+      "Visible Close, Escape and backdrop restore focus; Close remains visible while details scroll",
+      "Native modal keeps background controls out of Tab order; browser chrome remains accessible",
+      "Arrow, Home and End selection",
+      "Windows auto-select and signed download",
+      "No-JavaScript and manifest-fetch fallback",
+      "No horizontal overflow at 320\u20131920px; 720x450 reflow represents 200% zoom of 1440x900"
+    ],
+    "status": "PASS"
+  },
+  "share_metadata": {
+    "status": "PASS",
+    "checked_at": "2026-11-04T22:00:39.708Z",
+    "rows": [
+      {
+        "agent": "WhatsApp/2.24",
+        "status": 200,
+        "title": "Read Docs",
+        "descriptions": "empty",
+        "image": "share-v1.png"
+      },
+      {
+        "agent": "Twitterbot/1.0",
+        "status": 200,
+        "title": "Read Docs",
+        "descriptions": "empty",
+        "image": "share-v1.png"
+      },
+      {
+        "agent": "facebookexternalhit/1.1",
+        "status": 200,
+        "title": "Read Docs",
+        "descriptions": "empty",
+        "image": "share-v1.png"
+      }
+    ]
+  },
+  "local_preservation": {
+    "status": "PASS",
+    "files": 1078,
+    "changed_unrelated_paths": []
+  }
+}

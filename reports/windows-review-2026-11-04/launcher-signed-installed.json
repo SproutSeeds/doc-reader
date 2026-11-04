@@ -1,0 +1,14 @@
+{
+  "status": "PASS",
+  "cold_start_seconds": 16.67,
+  "duplicate_open_seconds": 0.8,
+  "restart_seconds": 8.61,
+  "actual_installed_exe": true,
+  "developer_tools_on_path": false,
+  "clean_profile": true,
+  "duplicate_services": false,
+  "preferences_preserved": true,
+  "all_owned_services_stopped": true,
+  "microphone_capture": "disabled",
+  "physical_shortcut_audio_trial": "requires an interactive user"
+}
