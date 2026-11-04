@@ -1,5 +1,13 @@
 # Release Checklist
 
+## 0.6.1 desktop preview
+
+Resolves the Intel Mac inference crash caused by duplicate OpenMP runtimes in
+Torch and CTranslate2. The package links both engines to one runtime, retaining
+the duplicate-runtime safety guard. Includes additional third-party license
+texts and corrected source links. This is the first public installer preview;
+0.6.0 was a build-validation candidate.
+
 ## 0.6.0 desktop preview
 
 Adds downloadable Apple silicon and Intel Mac apps and a per-user Windows x64

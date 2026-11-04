@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 from pathlib import Path
 import shutil
 import subprocess
@@ -42,11 +43,20 @@ def main() -> None:
     run("uv", "pip", "install", "--python", python, "--system", "--break-system-packages",
         "-r", ROOT / "packaging/requirements-desktop.txt")
     site = Path(subprocess.check_output([str(python), "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True).strip())
+    if sys.platform == "darwin" and platform.machine() == "x86_64":
+        # Torch 2.2 and CTranslate2 ship separate Intel OpenMP runtimes. Loading
+        # both aborts during real inference. Link CTranslate2 to Torch's already
+        # loaded runtime instead of disabling OpenMP's duplicate-runtime guard.
+        library = site / "ctranslate2/.dylibs/libctranslate2.4.6.0.dylib"
+        run("install_name_tool", "-change", "@loader_path/libiomp5.dylib",
+            "@loader_path/../../functorch/.dylibs/libiomp5.dylib", library)
+        run("codesign", "--force", "--sign", "-", library)
     for name in ("doc_reader", "assets"):
         shutil.copytree(ROOT / name, site / name, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copy2(ROOT / "package.json", site / "package.json")
     shutil.copy2(ROOT / "LICENSE", payload / "LICENSE.txt")
     shutil.copy2(ROOT / "packaging/THIRD_PARTY.md", payload / "THIRD_PARTY.txt")
+    shutil.copytree(ROOT / "packaging/licenses", payload / "licenses", dirs_exist_ok=True)
     versions = subprocess.check_output([str(python), "-c", "import importlib.metadata as m,json; print(json.dumps(sorted([(d.metadata['Name'],d.version) for d in m.distributions()])))"], text=True)
     (payload / "runtime-packages.json").write_text(versions, encoding="utf-8")
     # Installed console scripts contain build-machine shebangs. They are unused;

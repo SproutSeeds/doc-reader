@@ -33,9 +33,7 @@ Maintained by SproutSeeds. Research stewardship: Fractal Research Group ([frg.ea
 - Supports pause/resume, active-field dictation insertion, and selectable speech
   backends.
 
-## Platform support
-
-## Desktop downloads (0.6.0 preview)
+## Desktop downloads (0.6.1 preview)
 
 [Download Doc Reader for Mac or Windows](https://frg.earth/read-docs).
 Choose Apple silicon, Intel Mac, or Windows x64. Mac users drag the app into

@@ -33,7 +33,7 @@ for path in sorted(app.rglob('*'), key=lambda p: len(p.parts), reverse=True):
         run('codesign', '--force', '--timestamp', '--options', 'runtime', '--entitlements', entitlements, '--sign', args.identity, path)
 run('codesign', '--force', '--timestamp', '--options', 'runtime', '--sign', args.identity, app)
 run('codesign', '--verify', '--deep', '--strict', app)
-image_root = args.output / f'dmg-{args.target}'
+image_root = args.output / f'dmg-{version}-{args.target}'
 image_root.mkdir(exist_ok=True)
 staged_app = image_root / app.name
 if staged_app.exists():
