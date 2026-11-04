@@ -9,9 +9,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Match the Apple silicon packaging runner; the floating latest pool
-        # has failed to allocate runners before any test step can start.
-        os: [windows-latest, macos-14]
+        # Use the Intel packaging runner while hosted arm64 capacity is scarce.
+        # Desktop CI separately builds and exercises both Mac architectures.
+        os: [windows-latest, macos-15-intel]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
