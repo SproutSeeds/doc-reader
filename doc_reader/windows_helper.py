@@ -784,9 +784,9 @@ def main() -> int:
 
     # ---------------------------------------------------------- tray
     tray = QSystemTrayIcon(_build_icon(), app)
-    tray.setToolTip("Doc Reader")
+    tray.setToolTip("Read Docs")
     menu = QMenu()
-    open_action = QAction("Open Doc Reader", menu)
+    open_action = QAction("Open Read Docs", menu)
     selection_action = QAction(f"Read Selection ({selection_hotkey_label()})", menu)
     clipboard_action = QAction("Read Clipboard", menu)
     pause_action = QAction("Pause", menu)
@@ -842,7 +842,7 @@ def main() -> int:
 
     def set_status(text: str) -> None:
         status_action.setText(text[:80])
-        tray.setToolTip(f"Doc Reader - {text[:120]}")
+        tray.setToolTip(f"Read Docs - {text[:120]}")
 
     bridge.statusText.connect(set_status)
 
@@ -858,7 +858,7 @@ def main() -> int:
             if then:
                 then()
             return
-        set_status("Starting Doc Reader services...")
+        set_status("Starting Read Docs...")
 
         def worker() -> None:
             try:
@@ -873,7 +873,7 @@ def main() -> int:
                 bridge.statusText.emit(f"Could not start services: {exc}")
                 return
             if not _web_reachable():
-                bridge.statusText.emit("Doc Reader services did not become ready.")
+                bridge.statusText.emit("Read Docs services did not become ready.")
                 return
             if then:
                 bridge.webReady.emit(then)
@@ -886,7 +886,7 @@ def main() -> int:
     def read_text(label: str, text: str) -> None:
         cleaned = (text or "").strip()
         if not cleaned:
-            notify("Doc Reader", f"No {label.lower()} text to read.")
+            notify("Read Docs", f"No {label.lower()} text to read.")
             return
 
         def send() -> None:
@@ -906,7 +906,7 @@ def main() -> int:
             if text:
                 read_text("Clipboard", text)
                 return
-            notify("Doc Reader", f"No selected text detected. Highlight text, then press {selection_hotkey_label()}.")
+            notify("Read Docs", f"No selected text detected. Highlight text, then press {selection_hotkey_label()}.")
             return
         read_text("Highlighted", text)
 
@@ -976,14 +976,14 @@ def main() -> int:
             set_status("Finishing the previous dictation. Please wait.")
             return
         if not state["stt_enabled"]:
-            set_status("Dictation is disabled in Doc Reader settings.")
+            set_status("Dictation is disabled in Read Docs Settings.")
             return
         try:
             recorder.start(selected_device_index())
         except Exception as exc:  # noqa: BLE001
             state["last_event"] = f"recording failed: {exc}"
             set_status(f"Microphone error: {exc}")
-            notify("Doc Reader", f"Could not start recording: {exc}")
+            notify("Read Docs", f"Could not start recording: {exc}")
             return
         hud_state["recording_since"] = time.monotonic()
         # Show the HUD only once the key has been held for a moment, so a quick
@@ -1019,7 +1019,7 @@ def main() -> int:
         tray.setIcon(_build_icon())
         show_hud("")
         state["last_event"] = f"dictation cancelled: {dictation_hotkey_label(bindings['dictation_name'])}+{other_key} is a shortcut"
-        set_status("Doc Reader ready.")
+        set_status("Read Docs ready.")
 
     def on_dictation_stopped() -> None:
         if not recorder.active:
@@ -1047,7 +1047,7 @@ def main() -> int:
                 else f"microphone unavailable: {recorder.last_error}"
             )
             set_status("No sound from the microphone. Try again." if reopened else f"Microphone error: {recorder.last_error}")
-            notify("Doc Reader", f"No sound came from the microphone ({was}). Reopened on {now_on}; please try again.")
+            notify("Read Docs", f"No sound came from the microphone ({was}). Reopened on {now_on}; please try again.")
             print(f"[doc-reader] {state['last_event']} (hold {elapsed:.1f}s, peak {recorder.captured_peak:.4f})", flush=True)
             return
         show_hud("Transcribing…")
@@ -1370,7 +1370,7 @@ def main() -> int:
                     recorder.disarm()
                 bridge.stateUpdated.emit(
                     {
-                        "status": str(status.get("status") or "Doc Reader ready."),
+                        "status": str(status.get("status") or "Read Docs ready."),
                         "running": state["running"],
                         "paused": state["paused"],
                         "stt_enabled": state["stt_enabled"],
@@ -1379,7 +1379,7 @@ def main() -> int:
                 first = False
             except Exception:  # noqa: BLE001
                 state["web_ok"] = False
-                bridge.stateUpdated.emit({"status": "Doc Reader web app is not running.", "running": False, "paused": False, "stt_enabled": state["stt_enabled"]})
+                bridge.stateUpdated.emit({"status": "Read Docs is not running.", "running": False, "paused": False, "stt_enabled": state["stt_enabled"]})
             time.sleep(HEARTBEAT_SECONDS)
 
     def on_state_updated(payload: dict) -> None:
@@ -1402,7 +1402,7 @@ def main() -> int:
     threading.Thread(target=heartbeat_loop, name="doc-reader-heartbeat", daemon=True).start()
 
     tray.show()
-    set_status("Doc Reader helper online.")
+    set_status("Read Docs helper online.")
     print(
         f"[doc-reader] Windows helper online. Read selection: {selection_hotkey_label()}. "
         f"Dictation: hold {dictation_hotkey_label()}.",

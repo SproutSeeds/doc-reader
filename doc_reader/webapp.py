@@ -3682,8 +3682,8 @@ DOC_READER_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 51
 def _doc_reader_manifest() -> str:
     return json.dumps(
         {
-            "name": "Doc Reader",
-            "short_name": "Doc Reader",
+            "name": "Read Docs",
+            "short_name": "Read Docs",
             "description": "Local GPU speech workspace for reading, dictation, and library analysis.",
             "start_url": "/",
             "scope": "/",
@@ -3828,938 +3828,406 @@ INDEX_HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="application-name" content="Doc Reader">
-  <meta name="apple-mobile-web-app-title" content="Doc Reader">
+  <meta name="application-name" content="Read Docs">
+  <meta name="apple-mobile-web-app-title" content="Read Docs">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="theme-color" content="#1C1F25">
+  <meta name="theme-color" content="#edf0e9">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="shortcut icon" href="/favicon.ico">
   <link rel="alternate icon" href="/favicon.ico" sizes="32x32">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="manifest" href="/site.webmanifest">
-  <title>Doc Reader</title>
+  <title>Read Docs</title>
   <style>
     :root {
       color-scheme: light dark;
-      --bg: #F1F3F5;
-      --surface: #E8EBEE;
-      --editor: #FFFFFF;
-      --editor-line: #D3D8DE;
-      --ink: #15171B;
-      --muted: #4E5765;
-      --line: #D3D8DE;
-      --line-strong: #6F7986;
-      --accent: #137D6B;
-      --accent-soft: #D6EEE8;
-      --accent-ink: #FFFFFF;
-      --live: #9A5B00;
-      --live-soft: #FBEBD2;
-      --warn: #B3261E;
-      --warn-soft: #FADCD9;
-      --shadow: 0 8px 24px -12px rgba(21, 23, 27, 0.35);
-      --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, Roboto, "Helvetica Neue", sans-serif;
-      --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-      --header-h: 52px;
-      --library-w: 280px;
-      --inspector-w: 340px;
+      --bg: #edf0e9;
+      --ink: #253b33;
+      --muted: #5b6b62;
+      --line: #ccd4cb;
+      --glass: rgba(255, 255, 255, .58);
+      --solid: #f5f7f1;
+      --selected: rgba(71, 103, 82, .10);
+      --accent: #285e47;
+      --warn: #993e2c;
+      --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", sans-serif;
+      --font-reading: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
     }
     @media (prefers-color-scheme: dark) {
-      :root:not([data-theme="light"]) {
-        --bg: #15171B;
-        --surface: #1C1F25;
-        --editor: #242830;
-        --editor-line: #2C313A;
-        --ink: #F3F4F6;
-        --muted: #B0B8C4;
-        --line: #2C313A;
-        --line-strong: #6C7689;
-        --accent: #62D0BC;
-        --accent-soft: #1F3A36;
-        --accent-ink: #10251F;
-        --live: #F0B45C;
-        --live-soft: #3A2E1A;
-        --warn: #F28B82;
-        --warn-soft: #3D2523;
-        --shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.7);
+      :root {
+        --bg: #1a231f; --ink: #e2e8de; --muted: #a5b3a6; --line: #3b4940;
+        --glass: rgba(39, 53, 44, .78); --solid: #253129;
+        --selected: rgba(184, 211, 187, .12); --accent: #bed9bf; --warn: #f1aa96;
       }
     }
-    :root[data-theme="dark"] {
-      --bg: #15171B;
-      --surface: #1C1F25;
-      --editor: #242830;
-      --editor-line: #2C313A;
-      --ink: #F3F4F6;
-      --muted: #B0B8C4;
-      --line: #2C313A;
-      --line-strong: #6C7689;
-      --accent: #62D0BC;
-      --accent-soft: #1F3A36;
-      --accent-ink: #10251F;
-      --live: #F0B45C;
-      --live-soft: #3A2E1A;
-      --warn: #F28B82;
-      --warn-soft: #3D2523;
-      --shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.7);
-    }
-
     * { box-sizing: border-box; }
-    html { background: var(--bg); height: 100%; }
+    html { height: 100%; background: var(--bg); }
     body {
-      margin: 0;
-      height: 100%;
-      height: 100dvh;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      font: 14px/1.45 var(--font-body);
-      background: var(--bg);
-      color: var(--ink);
-      -webkit-font-smoothing: antialiased;
+      margin: 0; height: 100%; height: 100dvh; overflow: hidden;
+      display: flex; flex-direction: column;
+      color: var(--ink); background: var(--bg);
+      font: 14px/1.5 var(--font-body); -webkit-font-smoothing: antialiased;
     }
-    h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
-    h1 { font-size: 17px; line-height: 1.2; }
-    h2 { font-size: 15px; line-height: 1.3; }
-    h3 { font-size: 13px; line-height: 1.3; color: var(--ink); }
-    .visually-hidden {
-      position: absolute !important;
-      width: 1px; height: 1px;
-      padding: 0; margin: -1px;
-      overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
-      white-space: nowrap; border: 0;
-    }
-    .skip-link {
-      position: absolute; left: 8px; top: -40px; z-index: 50;
-      background: var(--accent); color: var(--accent-ink);
-      padding: 8px 12px; border-radius: 8px; font-weight: 600;
-    }
-    .skip-link:focus { top: 8px; }
+    h1, h2, h3, p { margin: 0; }
+    h2 { font: 400 30px/1.2 var(--font-reading); letter-spacing: -.025em; }
+    h3 { font-size: 14px; font-weight: 500; }
     [hidden] { display: none !important; }
-
-    /* ---------------------------------------------------------------- focus */
-    :focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
+    .visually-hidden {
+      position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
     }
-    textarea:focus-visible, select:focus-visible, .library-search:focus-visible {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+    .skip-link { position: fixed; z-index: 20; top: -100px; left: 20px; padding: 12px; color: var(--ink); background: var(--solid); }
+    .skip-link:focus { top: 12px; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 3px; }
+    button, .file-button, summary {
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 0; border-radius: 0; min-height: 44px; padding: 8px 10px;
+      color: inherit; background: transparent; font: inherit; cursor: pointer;
+      text-align: center; text-decoration: none; touch-action: manipulation;
     }
-
-    /* ---------------------------------------------------------------- controls */
-    button, .file-button {
-      border: 1px solid var(--line-strong);
-      border-radius: 8px;
-      padding: 0 12px;
-      min-height: 34px;
-      background: var(--surface);
-      color: var(--ink);
-      font: 500 13.5px/1.2 var(--font-body);
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      white-space: nowrap;
-      transition: transform 120ms var(--ease-out), background 140ms ease, border-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+    button, .file-button { transition: color 160ms ease, opacity 160ms ease; }
+    button:disabled { opacity: .45; cursor: default; }
+    @media (hover: hover) {
+      button:hover:not(:disabled), .file-button:hover, summary:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 5px; }
     }
-    button:active:not(:disabled), .file-button:active { transform: scale(0.97); }
-    @media (hover: hover) and (pointer: fine) {
-      button:hover:not(:disabled), .file-button:hover { background: var(--editor); }
-    }
-    button:disabled { cursor: default; opacity: 0.45; }
-    button.primary {
-      background: var(--accent);
-      color: var(--accent-ink);
-      border-color: var(--accent);
-      font-weight: 600;
-    }
-    @media (hover: hover) and (pointer: fine) {
-      button.primary:hover:not(:disabled) {
-        background: color-mix(in srgb, var(--accent) 86%, var(--ink));
-        border-color: color-mix(in srgb, var(--accent) 86%, var(--ink));
-      }
-    }
-    button.quiet { background: transparent; border-color: transparent; }
-    @media (hover: hover) and (pointer: fine) {
-      button.quiet:hover:not(:disabled) { background: var(--surface); border-color: var(--line-strong); }
-    }
-    button.icon-button {
-      width: 34px;
-      min-width: 34px;
-      padding: 0;
-    }
-    button svg, .file-button svg, .chip svg {
-      width: 16px; height: 16px; flex: none;
-      stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; fill: none;
-    }
-    button.icon-button.copied { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
     .file-button { position: relative; }
-    .file-button input[type="file"] {
-      position: absolute; inset: 0; width: 100%; height: 100%;
-      opacity: 0; cursor: pointer;
+    .file-button input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+    .file-button:focus-within { outline: 2px solid var(--accent); outline-offset: 4px; }
+    .file-button.busy { opacity: .45; cursor: default; }
+    .file-button.busy input { cursor: default; }
+    textarea, input, select { font: inherit; color: inherit; }
+    textarea { resize: none; }
+    input[type="checkbox"], input[type="range"] { accent-color: var(--accent); cursor: pointer; }
+    input[type="checkbox"] { width: 18px; height: 18px; margin: 0; }
+    input[type="range"] { width: 100%; min-height: 44px; margin: 0; }
+    select, .library-search {
+      width: 100%; min-height: 44px; padding: 10px 0; border: 0;
+      border-bottom: 1px solid var(--line); border-radius: 0; background: transparent;
     }
-    .file-button:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
-    .file-button.busy { opacity: 0.6; pointer-events: none; }
+    select { appearance: none; cursor: pointer; }
+    select option { background: var(--solid); }
+    ::placeholder { color: var(--muted); opacity: 1; }
+    .check-row { display: flex; align-items: center; gap: 12px; min-height: 44px; }
+    .check-row label { cursor: pointer; }
 
-    textarea, select, .library-search {
-      width: 100%;
-      border: 1px solid var(--line-strong);
-      border-radius: 8px;
-      padding: 8px 10px;
-      background: var(--editor);
-      color: var(--ink);
-      font: inherit;
-      transition: border-color 140ms ease, box-shadow 140ms ease;
+    .app-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 24px 38px; flex: none; }
+    .wordmark { font: 400 25px/1 var(--font-reading); letter-spacing: -.045em; white-space: nowrap; }
+    .wordmark em { font-weight: 400; }
+    .header-actions { display: flex; align-items: center; gap: 18px; }
+    .header-actions button { padding-inline: 7px; }
+    .app-body { min-height: 0; flex: 1; display: flex; }
+    .workspace { min-height: 0; width: 100%; display: flex; flex-direction: column; }
+    .workspace-page { width: min(100%, 800px); min-height: 0; flex: 1; margin: 0 auto; padding: 44px 40px 0; display: flex; flex-direction: column; }
+    .workspace-head { display: flex; justify-content: space-between; align-items: start; gap: 16px; padding-bottom: 28px; flex: none; }
+    .workspace-heading { min-width: 0; }
+    #workspaceTitle { overflow-wrap: anywhere; font-size: clamp(26px, 3vw, 36px); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+    .kicker, .meta, .detail, .voice-status, .hotkey-hint, .hotkey-sub { font-size: 12px; color: var(--muted); }
+    .kicker:empty, .meta:empty, .voice-status:empty { display: none; }
+    #workspaceKind { margin-bottom: 12px; }
+    #workspaceMeta { margin-top: 10px; }
+    .workspace-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: 2px; margin-top: -6px; }
+    .workspace-actions button { font-size: 12px; }
+    .workspace[data-mode="draft"] #workspaceTitle { font: 400 13px/1.5 var(--font-body); color: var(--muted); letter-spacing: 0; padding-top: 7px; }
+    .workspace-surface { display: flex; flex-direction: column; min-height: 80px; flex: 1; }
+    #text, #itemEditor, .reading-text {
+      width: 100%; min-height: 0; flex: 1; padding: 4px 6px 36px 0; margin: 0; border: 0;
+      background: transparent; font: 400 clamp(20px, 2vw, 23px)/1.7 var(--font-reading);
+      letter-spacing: -.012em; overflow-y: auto; scrollbar-width: thin;
+      scrollbar-color: var(--line) transparent; overflow-wrap: break-word;
     }
-    select {
-      min-height: 34px;
-      padding: 6px 30px 6px 10px;
-      appearance: none;
-      -webkit-appearance: none;
-      background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
-      background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%;
-      background-size: 5px 5px, 5px 5px;
-      background-repeat: no-repeat;
+    #text:focus-visible, #itemEditor:focus-visible { outline-offset: 8px; }
+    .measure { white-space: pre-wrap; }
+    .notice { padding: 24px 0; color: var(--muted); font-size: 15px; }
+    .workspace-messages { width: min(100%, 800px); padding: 0 40px; margin: 0 auto; flex: none; }
+    .error, .import-status, .status { font-size: 13px; padding-top: 10px; overflow-wrap: anywhere; }
+    .error, .hotkey-error, .bad { color: var(--warn); }
+    .error:empty, .import-status:empty, .hotkey-error:empty { display: none; }
+    .workspace-footer { flex: none; display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 25px 24px max(30px, env(safe-area-inset-bottom)); }
+    .control-bar {
+      display: flex; align-items: center; justify-content: center; gap: 24px; max-width: 100%;
+      padding: 9px 24px; border: 1px solid color-mix(in srgb, var(--solid) 85%, transparent);
+      border-radius: 24px; background: var(--glass); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+      box-shadow: 0 8px 32px -24px rgba(25, 47, 31, .25);
     }
-    input[type="range"] { accent-color: var(--accent); width: 100%; margin: 0; }
-    input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); margin: 0; }
-    .check-row { display: inline-flex; align-items: center; gap: 7px; }
-    .check-row label { color: var(--ink); font-weight: 500; }
-    label { color: var(--muted); font-size: 12.5px; font-weight: 500; }
-    .field { display: grid; gap: 5px; }
-    .field-inline { display: flex; align-items: center; gap: 8px; }
+    .playback, .footer-settings { display: flex; align-items: center; gap: 7px; min-width: 0; }
+    #readText { font: italic 32px/1 var(--font-reading); letter-spacing: -.045em; padding: 6px 12px; min-width: 80px; }
+    .footer-settings { gap: 0; }
+    .footer-settings button { font-size: 13px; }
+    #voiceButton { max-width: 210px; }
+    #voiceButtonText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #rateButton { white-space: nowrap; min-width: 52px; font-variant-numeric: tabular-nums; }
+    .playback-state { color: var(--muted); font-size: 12px; max-width: 90vw; text-align: center; }
+    #dictationChip[data-state="recording"], #dictationChip[data-state="working"], #dictationChip[data-state="starting"] { color: var(--accent); }
+    #dictationChip[data-state="error"] { color: var(--warn); }
 
-    .chip {
-      display: inline-flex; align-items: center; gap: 7px;
-      padding: 0 10px; min-height: 28px;
-      border-radius: 999px;
-      border: 1px solid var(--line);
-      background: var(--surface);
-      color: var(--muted);
-      font: 500 12.5px/1 var(--font-body);
+    dialog {
+      color: var(--ink); border: 1px solid color-mix(in srgb, var(--solid) 85%, transparent);
+      border-radius: 24px; padding: 0; width: min(640px, calc(100vw - 32px));
+      max-width: none; max-height: min(820px, calc(100dvh - 64px));
+      margin: auto; background: var(--glass); backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
+      box-shadow: 0 30px 90px -60px rgba(20, 40, 25, .4); overflow: hidden;
     }
-    .chip .chip-dot, .state-dot, .status-dot {
-      flex: none; width: 8px; height: 8px; border-radius: 50%;
-      background: var(--line-strong);
-    }
-    .chip[data-state="ready"] { color: var(--ink); }
-    .chip[data-state="ready"] .chip-dot { background: var(--accent); }
-    .chip[data-state="recording"] { color: var(--live); border-color: color-mix(in srgb, var(--live) 50%, var(--line)); background: var(--live-soft); }
-    .chip[data-state="recording"] .chip-dot { background: var(--live); animation: pulse 1.2s ease-in-out infinite; }
-    .chip[data-state="working"], .chip[data-state="starting"] { color: var(--ink); }
-    .chip[data-state="working"] .chip-dot, .chip[data-state="starting"] .chip-dot { background: var(--live); }
-    .chip[data-state="error"] { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); }
-    .chip[data-state="error"] .chip-dot { background: var(--warn); }
-    @keyframes pulse {
-      0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--live) 40%, transparent); }
-      50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--live) 0%, transparent); }
-    }
+    dialog[open] { display: flex; flex-direction: column; }
+    dialog::backdrop { background: rgba(29, 43, 32, .14); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
+    .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 22px 28px 14px; flex: none; }
+    .panel-head button { color: var(--muted); padding-right: 0; }
+    .panel-body { padding: 0 28px 24px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; scrollbar-width: thin; }
+    .panel-error { margin: 0 28px 18px; font-size: 13px; color: var(--warn); flex: none; overflow-wrap: anywhere; }
+    .panel-error:empty { display: none; }
+    .compact-panel { width: min(420px, calc(100vw - 32px)); }
+    .import-options { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+    .import-options .file-button { justify-content: start; padding: 12px 0; font: 400 24px/1.5 var(--font-reading); }
+    .import-options .check-row { margin-top: 6px; font-size: 13px; color: var(--muted); }
+    #audioAvailability:empty { display: none; }
+    #audioAvailability { font-size: 13px; color: var(--warn); }
+    .rate-control { display: flex; flex-direction: column; gap: 12px; padding-block: 12px; }
+    .rate-control output { text-align: center; font-variant-numeric: tabular-nums; }
 
-    /* ---------------------------------------------------------------- header */
-    .app-header {
-      flex: none;
-      height: var(--header-h);
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      padding: 0 14px;
-      background: var(--surface);
-      border-bottom: 1px solid var(--line);
-      min-width: 0;
-    }
-    .header-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
-    .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; min-width: 0; }
-    .header-right { margin-left: auto; display: flex; align-items: center; gap: 10px; min-width: 0; }
-    .status-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 34vw; }
-    .status {
-      color: var(--muted);
-      font-size: 12.5px;
-      font-variant-numeric: tabular-nums;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    body[data-state="reading"] .status-dot { background: var(--accent); }
-    body[data-state="paused"] .status-dot { background: var(--live); }
-    #libraryToggle { display: none; }
+    .library-top { padding: 0 28px; flex: none; }
+    .view-toggle { display: flex; gap: 12px; flex-wrap: wrap; }
+    .view-toggle button { padding-inline: 0; font-size: 13px; color: var(--muted); }
+    .view-toggle .active { color: var(--ink); text-decoration: underline; text-underline-offset: 6px; }
+    .list-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .library .list-header { padding: 18px 28px 0; flex: none; }
+    .count { font-size: 12px; color: var(--muted); }
+    .history { min-height: 140px; overflow-y: auto; padding: 12px 18px 22px; overscroll-behavior: contain; scrollbar-width: thin; }
+    .row-item { display: block; text-align: left; width: 100%; padding: 18px 10px; white-space: normal; border-radius: 10px; }
+    .row-item[aria-selected="true"] { background: var(--selected); }
+    .row-item + .row-item { margin-top: 4px; }
+    .row-primary { font: 400 21px/1.35 var(--font-reading); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+    .row-secondary { margin-top: 7px; color: var(--muted); font-size: 13px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .row-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--muted); margin-top: 10px; }
+    .live-tag { color: var(--accent); }
+    .empty { padding: 32px 10px; color: var(--muted); }
+    .library-more { flex: none; margin: 0 28px 20px; }
 
-    /* ---------------------------------------------------------------- body grid */
-    .app-body {
-      flex: 1;
-      min-height: 0;
-      display: grid;
-      grid-template-columns: var(--library-w) minmax(0, 1fr) auto;
-      position: relative;
-    }
-    .scrim {
-      position: fixed; inset: var(--header-h) 0 0 0;
-      background: rgba(0, 0, 0, 0.45);
-      z-index: 20;
-    }
-
-    /* ---------------------------------------------------------------- library */
-    .library {
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-      background: var(--surface);
-      border-right: 1px solid var(--line);
-    }
-    .library-top { display: grid; gap: 8px; padding: 12px 12px 8px; }
-    .view-toggle {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      border: 1px solid var(--line-strong);
-      border-radius: 9px;
-      background: var(--bg);
-      padding: 2px;
-      gap: 2px;
-    }
-    .view-toggle button {
-      border: 0;
-      border-radius: 7px;
-      min-height: 30px;
-      padding: 0 4px;
-      background: transparent;
-      color: var(--muted);
-      font-size: 12.5px;
-      font-variant-numeric: tabular-nums;
-      overflow: hidden; text-overflow: ellipsis;
-    }
-    .view-toggle button.active {
-      background: var(--accent);
-      color: var(--accent-ink);
-      font-weight: 600;
-    }
-    @media (hover: hover) and (pointer: fine) {
-      .view-toggle button:hover:not(.active) { color: var(--ink); background: var(--surface); }
-    }
-    .library-search { min-height: 34px; background: var(--editor); }
-    .list-header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 4px 12px 6px; }
-    .count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-    .history {
-      flex: 1;
-      min-height: 0;
-      overflow-y: auto;
-      overscroll-behavior: contain;
-      padding-bottom: 12px;
-    }
-    .library-more { margin: 6px 12px 12px; min-height: 34px; }
-    .row-item {
-      display: grid;
-      gap: 3px;
-      width: 100%;
-      text-align: left;
-      background: transparent;
-      border: 0;
-      border-left: 3px solid transparent;
-      border-radius: 0;
-      padding: 9px 12px 9px 11px;
-      min-height: 0;
-      font: inherit;
-      color: var(--ink);
-      white-space: normal;
-      transition: background 120ms var(--ease-out);
-    }
-    .row-item + .row-item { box-shadow: inset 0 1px 0 var(--line); }
-    @media (hover: hover) and (pointer: fine) {
-      .row-item:hover { background: color-mix(in srgb, var(--editor) 60%, var(--surface)); }
-    }
-    .row-item[aria-selected="true"] {
-      background: var(--editor);
-      border-left-color: var(--accent);
-    }
-    .row-item[aria-selected="true"] .row-primary { font-weight: 600; }
-    .row-item[aria-selected="true"] .row-secondary { color: var(--ink); }
-    .row-item:focus-visible { outline-offset: -2px; }
-    .row-primary {
-      font-size: 13.5px; line-height: 1.35; font-weight: 400;
-      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-      overflow-wrap: anywhere;
-    }
-    .row-secondary {
-      color: var(--muted); font-size: 12.5px; line-height: 1.35;
-      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-      overflow-wrap: anywhere;
-    }
-    .row-meta {
-      display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-      color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums;
-    }
-    .row-meta .live-tag {
-      color: var(--accent); font-weight: 600;
-      display: inline-flex; align-items: center; gap: 5px;
-    }
-    .row-meta .live-tag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-    .row-meta .live-tag.paused { color: var(--live); }
-    .row-item.live { box-shadow: inset 0 1px 0 var(--line), inset 3px 0 0 var(--accent); }
-    .row-item.live[aria-selected="true"] { border-left-color: var(--accent); }
-    .empty {
-      margin: 12px;
-      color: var(--muted);
-      border: 1px dashed var(--line-strong);
-      border-radius: 10px;
-      padding: 22px 14px;
-      text-align: center;
-      font-size: 13px;
-    }
-
-    /* ---------------------------------------------------------------- workspace */
-    .workspace {
-      display: flex;
-      flex-direction: column;
-      min-width: 0;
-      min-height: 0;
-      background: var(--bg);
-    }
-    .workspace-head {
-      flex: none;
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 16px;
-      padding: 14px 24px 10px;
-    }
-    .workspace-heading { min-width: 0; display: grid; gap: 2px; }
-    .kicker { color: var(--muted); font-size: 12px; font-weight: 500; }
-    .workspace-heading h2 { font-size: 16px; overflow-wrap: anywhere; }
-    .workspace-heading .meta { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
-    .workspace-actions { display: flex; gap: 6px; flex: none; }
-    .workspace-surface {
-      flex: 1;
-      min-height: 0;
-      display: flex;
-      flex-direction: column;
-      padding: 0 24px 16px;
-    }
-    #text, .reading-editor {
-      flex: 1;
-      min-height: 160px;
-      resize: none;
-      padding: 22px 26px;
-      font-size: 17px;
-      line-height: 1.6;
-      border-color: var(--editor-line);
-      border-radius: 10px;
-    }
-    .reading-text {
-      flex: 1;
-      min-height: 160px;
-      overflow: auto;
-      overscroll-behavior: contain;
-      padding: 22px 26px;
-      background: var(--editor);
-      border: 1px solid var(--editor-line);
-      border-radius: 10px;
-      font-size: 17px;
-      line-height: 1.6;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-    }
-    .reading-text > .measure { max-width: 72ch; }
-    .notice {
-      margin-top: 10px;
-      color: var(--muted);
-      font-size: 13px;
-      padding: 10px 12px;
-      border: 1px dashed var(--line-strong);
-      border-radius: 8px;
-    }
-    .import-status { color: var(--muted); font-size: 12.5px; padding: 0 24px; min-height: 0; }
-    .import-status:empty { display: none; }
-    .error {
-      color: var(--warn);
-      font-size: 13px;
-      padding: 6px 24px 0;
-    }
-    .error:empty { display: none; }
-    .workspace-footer {
-      flex: none;
-      display: flex;
-      align-items: center;
-      gap: 14px 22px;
-      flex-wrap: wrap;
-      padding: 10px 24px;
-      border-top: 1px solid var(--line);
-      background: var(--surface);
-    }
-    .playback { display: flex; align-items: center; gap: 8px; }
-    .playback-state {
-      display: inline-flex; align-items: center; gap: 7px;
-      margin-left: 6px;
-      color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums;
-      max-width: 34ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    body[data-state="reading"] .state-dot { background: var(--accent); }
-    body[data-state="paused"] .state-dot { background: var(--live); }
-    .footer-settings { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-left: auto; }
-    .footer-settings select { width: 190px; }
-    .footer-settings .speed input[type="range"] { width: 130px; }
-    .footer-settings output { color: var(--ink); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 12ch; }
-
-    /* ---------------------------------------------------------------- hotkeys */
-    .hotkeys { display: grid; gap: 10px; padding: 2px 0 4px; }
-    .hotkey-row { display: grid; gap: 6px; }
-    .hotkey-head { display: flex; align-items: baseline; gap: 6px; }
-    .hotkey-name { color: var(--ink); font-size: 12.5px; font-weight: 600; }
-    .hotkey-sub { color: var(--muted); font-size: 11.5px; }
-    .hotkey-field {
-      display: flex;
-      align-items: center;
-      justify-content: flex-start;
-      gap: 6px;
-      width: 100%;
-      min-height: 40px;
-      padding: 5px 9px 5px 7px;
-      border: 1px solid var(--line-strong);
-      border-radius: 9px;
-      background: var(--editor);
-      color: var(--ink);
-      text-align: left;
-      transition: border-color 150ms var(--ease-out), box-shadow 150ms var(--ease-out);
-    }
-    .hotkey-field svg { width: 14px; height: 14px; color: var(--muted); margin-left: auto; flex: none; }
-    .hotkey-field.recording {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
-    }
-    .hotkey-field.recording svg { color: var(--accent); }
-    .hotkey-prompt { color: var(--muted); font-size: 12.5px; }
-    .keycaps { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-    .keycaps .plus { color: var(--muted); font-size: 11px; }
-    kbd.keycap {
-      font: inherit;
-      font-size: 12.5px;
-      font-weight: 600;
-      line-height: 1;
-      padding: 6px 9px;
-      border-radius: 6px;
-      background: var(--bg);
-      border: 1px solid var(--line);
-      border-bottom-width: 2px;
-      color: var(--ink);
-      white-space: nowrap;
-    }
-    .hotkey-error { color: var(--warn); font-size: 12px; line-height: 1.35; }
-    .hotkey-error:empty { display: none; }
-    .hotkey-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-    .hotkey-chip {
-      min-height: 28px;
-      padding: 0 11px;
-      border-radius: 999px;
-      border: 1px solid var(--line-strong);
-      background: var(--bg);
-      color: var(--ink);
-      font-size: 12.5px;
-      font-weight: 500;
-      font-variant-numeric: tabular-nums;
-    }
-    .hotkey-chip[aria-checked="true"] {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: var(--accent-ink);
-      font-weight: 600;
-    }
-    @media (hover: hover) and (pointer: fine) {
-      .hotkey-chip:hover:not([aria-checked="true"]) { background: var(--surface); border-color: var(--ink); }
-    }
-    .hotkey-hint { color: var(--muted); font-size: 11.5px; }
-
-    /* ---------------------------------------------------------------- voice picker */
-    .voice-picker { position: relative; }
-    #voiceButton { max-width: 260px; }
-    #voiceButton span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    #voiceButton svg { width: 14px; height: 14px; color: var(--muted); flex: none; }
-    .voice-menu {
-      position: absolute;
-      left: 0;
-      bottom: calc(100% + 8px);
-      width: 360px;
-      max-height: min(70vh, 640px);
-      overflow-y: auto;
-      overscroll-behavior: contain;
-      background: var(--surface);
-      border: 1px solid var(--line-strong);
-      border-radius: 12px;
-      box-shadow: var(--shadow);
-      padding: 8px;
-      z-index: 40;
-      transform-origin: bottom left;
-      transition: opacity 150ms var(--ease-out), transform 150ms var(--ease-out);
-    }
-    @starting-style {
-      .voice-menu { opacity: 0; transform: scale(0.97) translateY(4px); }
-    }
-    .voice-menu-head { position: sticky; top: -8px; z-index: 2; background: var(--surface); display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 8px 8px; }
-    .voice-menu-head h3 { margin: 0; font-size: 13px; font-weight: 600; }
-    .voice-groups { display: grid; gap: 6px; }
-    .voice-group-title { color: var(--muted); font-size: 12px; font-weight: 500; padding: 8px 8px 2px; }
-    .voice-list { display: grid; gap: 1px; }
-    .voice-choice { display: flex; align-items: center; gap: 4px; }
-    .voice-choice > .voice-option { min-width: 0; flex: 1; }
-    .voice-option {
-      display: grid;
-      grid-template-columns: 18px minmax(0, 1fr) auto;
-      align-items: center;
-      gap: 8px;
-      width: 100%;
-      min-height: 34px;
-      padding: 4px 6px 4px 8px;
-      border: 0;
-      border-radius: 8px;
-      background: transparent;
-      color: var(--ink);
-      text-align: left;
-      font: inherit;
-      white-space: normal;
-    }
-    @media (hover: hover) and (pointer: fine) {
-      .voice-option:hover { background: var(--editor); }
-    }
-    .voice-option .check { width: 16px; height: 16px; color: var(--accent); opacity: 0; }
-    .voice-option[aria-selected="true"] .check { opacity: 1; }
-    .voice-option[aria-selected="true"] .voice-name { font-weight: 600; }
-    .voice-name { font-size: 13.5px; line-height: 1.25; }
-    .voice-meta { color: var(--muted); font-size: 11.5px; line-height: 1.2; }
-    .voice-preview {
-      width: 28px; min-width: 28px; min-height: 28px; padding: 0;
-      border-radius: 999px;
-      border-color: transparent;
-      background: transparent;
-      color: var(--muted);
-    }
-    .voice-preview svg { width: 14px; height: 14px; }
-    .voice-preview.playing { color: var(--accent); border-color: var(--accent); }
-    .voice-preview.playing svg { fill: currentColor; }
-    .voice-preview.loading { opacity: 0.5; }
-    @media (hover: hover) and (pointer: fine) {
-      .voice-preview:hover:not(:disabled) { color: var(--ink); background: var(--bg); border-color: var(--line-strong); }
-    }
-    .voice-original {
-      position: sticky;
-      bottom: -8px;
-      margin: 6px -8px -8px;
-      padding: 6px 8px 8px;
-      background: var(--surface);
-      border-top: 1px solid var(--line);
-    }
-    .voice-disclosure {
-      width: 100%;
-      justify-content: flex-start;
-      border-color: transparent;
-      background: transparent;
-      color: var(--ink);
-      padding: 0 8px;
-      gap: 8px;
-    }
-    .voice-disclosure .chevron { transition: transform 150ms var(--ease-out); }
-    .voice-disclosure[aria-expanded="true"] .chevron { transform: rotate(90deg); }
-    .voice-disclosure .detail { margin-left: auto; }
-    @media (max-width: 720px) {
-      .voice-menu {
-        position: fixed;
-        left: 8px; right: 8px; bottom: 8px;
-        width: auto;
-        max-height: 70vh;
-        transform-origin: bottom center;
-      }
-    }
-
-    /* ---------------------------------------------------------------- inspector */
-    .inspector {
-      width: var(--inspector-w);
-      min-height: 0;
-      overflow-y: auto;
-      overscroll-behavior: contain;
-      background: var(--surface);
-      border-left: 1px solid var(--line);
-      display: flex;
-      flex-direction: column;
-    }
-    .inspector-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 6px; }
-    .inspector-section { padding: 12px 14px 14px; border-top: 1px solid var(--line); display: grid; gap: 10px; }
-    .inspector-section .list-header { padding: 0; }
-    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .service-row { justify-content: space-between; }
-    .service-actions { display: flex; gap: 6px; }
-    .service-toggle.running { color: var(--live); border-color: color-mix(in srgb, var(--live) 50%, var(--line-strong)); background: var(--live-soft); }
-    .readiness { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; font-size: 12.5px; }
+    .settings-section { border-bottom: 1px solid var(--line); }
+    .settings-section:last-child { border: 0; }
+    summary { display: flex; justify-content: space-between; padding: 20px 0; font-size: 16px; list-style: none; }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { content: "Show"; font-size: 12px; color: var(--muted); }
+    details[open] > summary::after { content: "Hide"; }
+    .inspector-section { padding-bottom: 24px; display: flex; flex-direction: column; gap: 18px; }
+    .hotkeys { display: flex; flex-direction: column; gap: 22px; }
+    .hotkey-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; }
+    .hotkey-field { width: 100%; justify-content: start; padding-inline: 0; }
+    .hotkey-field::after { content: "Change"; margin-left: auto; font-size: 12px; color: var(--muted); }
+    .hotkey-field.recording::after { content: "Cancel"; }
+    .hotkey-field.recording { color: var(--accent); }
+    .keycaps { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .keycap { font: inherit; }
+    .plus { color: var(--muted); }
+    .hotkey-chips { display: flex; flex-wrap: wrap; column-gap: 12px; }
+    .hotkey-chip { font-size: 12px; padding-inline: 0; color: var(--muted); }
+    .hotkey-chip[aria-checked="true"] { color: var(--ink); text-decoration: underline; text-underline-offset: 5px; }
+    .hotkey-error { font-size: 12px; }
+    .field { display: flex; flex-direction: column; gap: 8px; }
+    .service-row, .service-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .readiness { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 24px; margin: 0; font-size: 12px; }
     .readiness dt { color: var(--muted); }
-    .readiness dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
-    .readiness dd.ok { color: var(--ink); }
-    .readiness dd.warn { color: var(--live); }
-    .readiness dd.bad { color: var(--warn); }
-    .voice-status { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
-    .mic-meter {
-      --level: 0;
-      height: 8px;
-      border: 1px solid var(--line-strong);
-      border-radius: 999px;
-      background: var(--bg);
-      overflow: hidden;
-    }
-    .mic-meter > div {
-      width: calc(var(--level) * 100%);
-      min-width: 2px; max-width: 100%; height: 100%;
-      border-radius: inherit;
-      background: linear-gradient(90deg, var(--accent) 0%, var(--accent) 60%, var(--live) 100%);
-      transition: width 80ms linear;
-    }
-    .mic-meter.active { border-color: var(--live); }
-    .recording-debug {
-      display: grid; gap: 6px;
-      border: 1px solid color-mix(in srgb, var(--live) 40%, var(--line));
-      border-radius: 8px; padding: 8px 10px;
-      background: var(--live-soft);
-      color: var(--muted); font-size: 12px;
-    }
-    .recording-debug strong { color: var(--ink); font-size: 12.5px; }
-    .recording-debug audio { width: 100%; height: 32px; }
-    .metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
-    .metric-cell { display: grid; gap: 1px; }
-    .metric-value { font-size: 22px; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
-    .metric-label { color: var(--muted); font-size: 12px; }
-    .snippet { color: var(--ink); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
-    .detail { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-    .topic-map { display: flex; gap: 6px; flex-wrap: wrap; }
-    .topic-pill {
-      border: 1px solid var(--line-strong);
-      border-radius: 999px;
-      padding: 2px 9px;
-      color: var(--ink);
-      font-size: 12px; font-variant-numeric: tabular-nums;
-      background: var(--bg);
-    }
+    .readiness dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+    .mic-meter { height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }
+    .mic-meter > div { height: 100%; width: calc(var(--level, 0) * 100%); background: var(--accent); }
+    .recording-debug { font-size: 12px; color: var(--muted); }
+    .recording-debug audio { margin-top: 12px; width: 100%; }
+    .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .metric-value { font: 400 30px/1.2 var(--font-reading); }
+    .metric-label { font-size: 12px; color: var(--muted); }
+    .topic-map { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+    .topic-pill { font-size: 12px; color: var(--muted); }
 
-    /* ---------------------------------------------------------------- responsive */
-    @media (max-width: 1180px) {
-      .app-body { grid-template-columns: var(--library-w) minmax(0, 1fr); }
-      .inspector {
-        position: fixed; top: var(--header-h); right: 0; bottom: 0;
-        z-index: 30; box-shadow: var(--shadow);
-        width: min(var(--inspector-w), 100vw);
-      }
+    .voice-group-title { font-size: 12px; color: var(--muted); margin: 12px 0; }
+    .voice-list { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 18px; }
+    .voice-choice { display: flex; min-width: 0; align-items: center; border-radius: 10px; }
+    .voice-choice:has([aria-pressed="true"]) { background: var(--selected); }
+    .voice-option { flex: 1; justify-content: start; text-align: left; min-width: 0; }
+    .voice-option[aria-pressed="true"] .voice-name { text-decoration: underline; text-underline-offset: 4px; }
+    .voice-name { font-size: 14px; }
+    .voice-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .voice-preview { padding: 8px; font-size: 11px; color: var(--muted); }
+    .voice-preview.playing { color: var(--accent); }
+    .voice-preview.loading { opacity: .5; }
+    .voice-original { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 10px; }
+    .voice-disclosure { justify-content: space-between; width: 100%; padding: 12px 0; font-size: 13px; gap: 20px; }
+    .voice-disclosure::after { content: "Show"; font-size: 12px; color: var(--muted); }
+    .voice-disclosure[aria-expanded="true"]::after { content: "Hide"; }
+    #voiceOriginalSummary { display: none; }
+    #voiceOriginalList { grid-template-columns: 1fr; }
+
+    @media (max-width: 700px) {
+      .app-header { padding: 16px 22px; gap: 12px; }
+      .header-actions { gap: 8px; }
+      .header-actions button { font-size: 13px; }
+      .wordmark { font-size: 23px; }
+      .workspace-page { padding: 28px 28px 0; }
+      .workspace-head { padding-bottom: 22px; gap: 12px; }
+      .workspace[data-mode="saved"] .workspace-head { display: block; }
+      .workspace-actions { max-width: none; margin-top: 12px; justify-content: start; }
+      .workspace-messages { padding-inline: 28px; }
+      .workspace-footer { padding: 20px 16px max(22px, env(safe-area-inset-bottom)); }
+      .control-bar { gap: 8px; padding: 8px 12px; border-radius: 22px; flex-wrap: wrap; }
+      #readText { font-size: 29px; min-width: 68px; }
+      #voiceButton { max-width: 115px; }
+      .footer-settings button { padding-inline: 8px; }
+      dialog { max-height: calc(100dvh - 32px); }
+      .panel-head { padding: 18px 22px 12px; }
+      .panel-body { padding: 0 22px 22px; }
+      .library-top { padding: 0 22px; }
+      .library .list-header { padding-inline: 22px; }
+      .view-toggle { gap: 16px; }
+      .view-toggle button { font-size: 12px; }
     }
-    @media (max-width: 1023px) {
-      #libraryToggle { display: inline-flex; }
-      .app-body { grid-template-columns: minmax(0, 1fr); }
-      .library {
-        position: fixed; top: var(--header-h); left: 0; bottom: 0;
-        width: min(var(--library-w), 86vw);
-        z-index: 30; box-shadow: var(--shadow);
-        transform: translateX(-104%);
-        visibility: hidden;
-        transition: transform 200ms var(--ease-out), visibility 0s linear 200ms;
-      }
-      .library.open { transform: none; visibility: visible; transition: transform 200ms var(--ease-out); }
-      .header-actions .check-row label { font-size: 12.5px; }
+    @media (max-width: 440px) {
+      .app-header { padding: 12px 16px; gap: 6px; }
+      .header-actions { gap: 2px; }
+      .header-actions button { font-size: 12px; padding-inline: 6px; }
+      .workspace-page { padding: 20px 22px 0; }
+      #text, #itemEditor, .reading-text { font-size: 20px; }
+      .control-bar { column-gap: 8px; row-gap: 0; padding: 8px 14px; max-width: 100%; }
+      #dictationChip { padding-inline: 8px; }
+      .voice-list { grid-template-columns: 1fr; }
+      .readiness { column-gap: 12px; }
     }
-    @media (max-width: 720px) {
-      .app-header { gap: 6px; padding: 0 8px; }
-      .header-left { gap: 6px; }
-      h1 { font-size: 15px; white-space: nowrap; }
-      .header-actions { gap: 4px; }
-      .header-actions .check-row { gap: 5px; }
-      .header-actions .check-row label { font-size: 12px; }
-      .header-right { gap: 6px; }
-      .header-actions .file-button span, #newText span { display: none; }
-      .header-actions .file-button, #newText { min-width: 34px; padding: 0 8px; }
-      .status-wrap { max-width: 26vw; }
-      .status { display: none; }
-      #inspectorToggle span { display: none; }
-      #inspectorToggle { min-width: 34px; padding: 0 8px; }
-      .workspace-head { padding: 12px 14px 8px; }
-      .workspace-surface { padding: 0 14px 12px; }
-      #text, .reading-editor, .reading-text { padding: 16px; font-size: 16px; }
-      .workspace-footer { padding: 8px 12px; gap: 10px 14px; }
-      .footer-settings { margin-left: 0; width: 100%; }
-      .footer-settings select { width: 150px; }
-      .playback-state { max-width: 20ch; }
-      .error, .import-status { padding-left: 14px; padding-right: 14px; }
+    @media (max-height: 520px) {
+      .app-header { padding-block: 6px; }
+      .workspace-page { padding-top: 8px; }
+      .workspace-head { padding-bottom: 10px; }
+      .workspace-footer { padding-block: 10px; }
     }
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { transition: none !important; animation: none !important; }
-    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }
     @media (prefers-contrast: more) {
-      button, .file-button, textarea, select, .library-search, .view-toggle, .mic-meter { border-color: var(--ink); }
-      .row-item[aria-selected="true"] { outline: 2px solid var(--ink); outline-offset: -2px; }
+      :root { --muted: var(--ink); }
+      .control-bar, dialog { background: var(--solid); border: 1px solid var(--ink); }
+      .row-item[aria-selected="true"], .voice-choice:has([aria-pressed="true"]) { outline: 1px solid var(--ink); outline-offset: -1px; }
+    }
+    @media (forced-colors: active) {
+      dialog, .control-bar { border: 1px solid CanvasText; background: Canvas; }
+      button:disabled { color: GrayText; }
     }
   </style>
 </head>
 <body>
   <a class="skip-link" href="#workspaceSurface">Skip to workspace</a>
   <header class="app-header">
-    <div class="header-left">
-      <button id="libraryToggle" class="icon-button" type="button" aria-label="Show library" aria-expanded="false" aria-controls="librarySidebar">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></svg>
-      </button>
-      <h1>Doc Reader</h1>
-    </div>
-    <div class="header-actions">
-      <label class="file-button" id="fileLabel" title="Import a PDF, DOCX, TXT, or Markdown file and read it">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
-        <span>Import document</span>
-        <input id="file" type="file" accept=".pdf,.docx,.txt,.md,.markdown" aria-label="Import document">
-      </label>
-      <label class="file-button" id="audioFileLabel" title="Transcribe an audio or video file into a Dictation">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><path d="M12 18v3"/></svg>
-        <span>Import audio</span>
-        <input id="audioFile" type="file" accept="audio/*,video/mp4,video/webm,.aac,.aif,.aiff,.flac,.m4a,.mp3,.mp4,.ogg,.wav,.webm" aria-label="Import audio">
-      </label>
-      <div class="check-row">
-        <input id="audioTimestamps" type="checkbox">
-        <label for="audioTimestamps">Timestamps</label>
-      </div>
-      <button id="newText" type="button" title="Start a new text">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-        <span>New text</span>
-      </button>
-    </div>
-    <div class="header-right">
-      <div class="status-wrap">
-        <span class="status-dot" aria-hidden="true"></span>
-        <div class="status" id="status" aria-live="polite">Ready.</div>
-      </div>
-      <button id="inspectorToggle" type="button" aria-expanded="false" aria-controls="inspector" title="Dictation, Signal map, and engine details">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h6"/><circle cx="17" cy="15" r="3"/></svg>
-        <span>Details</span>
-      </button>
-    </div>
+    <h1 class="wordmark">Read <em>docs</em></h1>
+    <nav class="header-actions" aria-label="Workspace">
+      <button id="libraryToggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="librarySidebar">Library</button>
+      <button id="importToggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="importMenu">Import</button>
+      <button id="inspectorToggle" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="inspector">Settings</button>
+    </nav>
   </header>
 
   <div class="app-body" id="appBody">
-    <div class="scrim" id="scrim" hidden></div>
-
-    <aside class="library" id="librarySidebar" aria-label="Library">
-      <div class="library-top">
-        <div class="view-toggle" role="tablist" aria-label="Library filter">
-          <button id="showAll" type="button" role="tab" aria-controls="library">All</button>
-          <button id="showReadings" type="button" role="tab" aria-controls="library">Readings</button>
-          <button id="showDictations" type="button" role="tab" aria-controls="library">Dictations</button>
-          <button id="showClawdad" type="button" role="tab" aria-controls="library" title="Items handed off from the Clawdad app">Clawdad</button>
+    <main class="workspace" id="workspace" data-mode="draft">
+      <div class="workspace-page">
+        <div class="workspace-head">
+          <div class="workspace-heading">
+            <div class="kicker" id="workspaceKind"></div>
+            <h2 id="workspaceTitle">New text</h2>
+            <div class="meta" id="workspaceMeta"></div>
+          </div>
+          <div class="workspace-actions">
+            <button id="copyItem" type="button" aria-label="Copy text" hidden>Copy</button>
+            <button id="editItem" type="button" aria-label="Edit text" hidden>Edit</button>
+            <button id="saveItem" type="button" title="Save changes (Ctrl+Enter)" hidden>Save</button>
+            <button id="cancelEdit" type="button" title="Cancel edit (Esc)" hidden>Cancel</button>
+            <button id="newText" type="button" aria-label="New text">New</button>
+          </div>
         </div>
-        <label class="visually-hidden" for="librarySearch">Search library</label>
-        <input id="librarySearch" class="library-search" type="search" placeholder="Search saved items">
-      </div>
-      <div class="list-header">
-        <h2 id="libraryTitle">Library</h2>
-        <div class="count" id="libraryCount"></div>
-      </div>
-      <div class="history" id="library" role="listbox" aria-label="Saved items"></div>
-      <button class="library-more" id="libraryMore" type="button" hidden>Show more</button>
-    </aside>
-
-    <main class="workspace" id="workspace">
-      <div class="workspace-head">
-        <div class="workspace-heading">
-          <div class="kicker" id="workspaceKind">New text</div>
-          <h2 id="workspaceTitle">Untitled</h2>
-          <div class="meta" id="workspaceMeta">Paste or type, then press Read text.</div>
-        </div>
-        <div class="workspace-actions">
-          <button id="copyItem" class="icon-button" type="button" aria-label="Copy text" title="Copy text" hidden>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="10" height="10" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>
-          </button>
-          <button id="editItem" class="icon-button" type="button" aria-label="Edit text" title="Edit text" hidden>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-          </button>
-          <button id="saveItem" class="primary" type="button" title="Save changes (Ctrl+Enter)" hidden>Save</button>
-          <button id="cancelEdit" type="button" title="Cancel edit (Esc)" hidden>Cancel</button>
+        <div class="workspace-surface" id="workspaceSurface" tabindex="-1">
+          <label class="visually-hidden" for="text">Text to read</label>
+          <textarea id="text" placeholder="Paste or type."></textarea>
+          <div class="reading-text" id="itemView" hidden><div class="measure" id="itemViewText"></div></div>
+          <label class="visually-hidden" for="itemEditor">Edit saved text</label>
+          <textarea id="itemEditor" hidden></textarea>
+          <div class="notice" id="itemNotice" hidden></div>
         </div>
       </div>
-      <div class="workspace-surface" id="workspaceSurface" tabindex="-1">
-        <label class="visually-hidden" for="text">Text to read</label>
-        <textarea id="text" placeholder="Paste or type anything to hear it read aloud."></textarea>
-        <div class="reading-text" id="itemView" hidden><div class="measure" id="itemViewText"></div></div>
-        <label class="visually-hidden" for="itemEditor">Edit saved text</label>
-        <textarea id="itemEditor" class="reading-editor" hidden></textarea>
-        <div class="notice" id="itemNotice" hidden></div>
+      <div class="workspace-messages">
+        <div class="status" id="status" aria-live="polite" hidden></div>
+        <div class="import-status" id="audioFileStatus" aria-live="polite"></div>
+        <div class="error" id="error" role="alert"></div>
       </div>
-      <div class="import-status" id="audioFileStatus" aria-live="polite"></div>
-      <div class="error" id="error" role="alert"></div>
       <footer class="workspace-footer">
-        <div class="playback">
-          <button class="primary" id="readText" type="button">Read text</button>
-          <button id="pause" type="button">Pause</button>
-          <button id="stop" type="button">Stop</button>
-          <div class="playback-state" id="playbackState">
-            <span class="state-dot" aria-hidden="true"></span>
-            <span id="playbackStateText">Ready</span>
+        <div class="control-bar" aria-label="Reading controls">
+          <div class="playback">
+            <button id="readText" type="button">Read</button>
+            <button id="pause" type="button" hidden>Pause</button>
+            <button id="stop" type="button" hidden>Stop</button>
+          </div>
+          <div class="footer-settings">
+            <button id="voiceButton" type="button" aria-label="Choose voice" aria-haspopup="dialog" aria-expanded="false" aria-controls="voiceMenu"><span id="voiceButtonText">Voice</span></button>
+            <button id="rateButton" type="button" aria-label="Reading speed" aria-haspopup="dialog" aria-expanded="false" aria-controls="rateMenu">1×</button>
+            <button id="dictationChip" type="button" aria-haspopup="dialog" aria-controls="inspector"><span id="dictationChipText">Dictation</span></button>
           </div>
         </div>
-        <div class="footer-settings">
-          <div class="field-inline voice-field">
-            <label for="voiceButton">Voice</label>
-            <div class="voice-picker">
-              <button id="voiceButton" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="voiceMenu">
-                <span id="voiceButtonText">Voice</span>
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg>
-              </button>
-              <div id="voiceMenu" class="voice-menu" role="dialog" aria-label="Choose a voice" hidden>
-                <div class="voice-menu-head">
-                  <h3>Kokoro voices</h3>
-                  <button id="voiceClose" type="button" aria-label="Close voice picker">Close</button>
-                </div>
-                <div id="voiceGroups" class="voice-groups"></div>
-                <div class="voice-original">
-                  <button id="voiceOriginalToggle" class="voice-disclosure" type="button" aria-expanded="false" aria-controls="voiceOriginalList">
-                    <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
-                    <span>Original engine options</span>
-                    <span class="detail" id="voiceOriginalSummary"></span>
-                  </button>
-                  <div id="voiceOriginalList" class="voice-list" role="listbox" aria-label="Engine options" hidden></div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="field-inline speed">
-            <label for="readRate">Speed</label>
-            <input id="readRate" type="range" min="90" max="300" step="5" value="180">
-            <output id="readRateValue" for="readRate">180 WPM / 1.00x</output>
-          </div>
-          <button class="chip" id="dictationChip" type="button" aria-controls="inspector" title="Dictation state. Opens details.">
-            <span class="chip-dot" aria-hidden="true"></span>
-            <span id="dictationChipText">Dictation</span>
-          </button>
-        </div>
+        <div class="playback-state" id="playbackState" aria-live="polite" hidden><span id="playbackStateText"></span></div>
       </footer>
     </main>
+  </div>
 
-    <aside class="inspector" id="inspector" aria-label="Details" hidden>
-      <div class="inspector-head">
-        <h2>Details</h2>
-        <button id="inspectorClose" class="icon-button quiet" type="button" aria-label="Close details">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-        </button>
+  <dialog class="library" id="librarySidebar" aria-labelledby="libraryHeading">
+    <div class="panel-head"><h2 id="libraryHeading">Library</h2><button id="libraryClose" type="button">Close</button></div>
+    <div class="library-top">
+      <div class="view-toggle" role="tablist" aria-label="Library filter">
+        <button id="showAll" type="button" role="tab" aria-controls="library">All</button>
+        <button id="showReadings" type="button" role="tab" aria-controls="library">Readings</button>
+        <button id="showDictations" type="button" role="tab" aria-controls="library">Dictations</button>
+        <button id="showClawdad" type="button" role="tab" aria-controls="library">Clawdad</button>
       </div>
-      <section class="inspector-section" aria-labelledby="dictationHeading">
-        <h3 id="dictationHeading">Dictation</h3>
+      <label class="visually-hidden" for="librarySearch">Search library</label>
+      <input id="librarySearch" class="library-search" type="search" placeholder="Search" autofocus>
+    </div>
+    <div class="list-header"><span id="libraryTitle" class="visually-hidden">Library</span><span class="count" id="libraryCount"></span></div>
+    <div class="history" id="library" role="listbox" aria-label="Saved items"></div>
+    <button class="library-more" id="libraryMore" type="button" hidden>Show more</button>
+  </dialog>
+
+  <dialog class="compact-panel" id="importMenu" aria-labelledby="importHeading">
+    <div class="panel-head"><h2 id="importHeading">Import</h2><button id="importClose" type="button">Close</button></div>
+    <div class="panel-body import-options">
+      <label class="file-button" id="fileLabel">
+        <span>Document</span>
+        <input id="file" type="file" accept=".pdf,.docx,.txt,.md,.markdown" aria-label="Import document">
+      </label>
+      <label class="file-button" id="audioFileLabel">
+        <span>Audio</span>
+        <input id="audioFile" type="file" accept="audio/*,video/mp4,video/webm,.aac,.aif,.aiff,.flac,.m4a,.mp3,.mp4,.ogg,.wav,.webm" aria-label="Import audio">
+      </label>
+      <p id="audioAvailability" role="status"></p>
+      <div class="check-row"><input id="audioTimestamps" type="checkbox"><label for="audioTimestamps">Include timestamps</label></div>
+    </div>
+  </dialog>
+
+  <dialog id="voiceMenu" class="voice-menu" aria-labelledby="voiceHeading">
+    <div class="panel-head"><h2 id="voiceHeading">Voices</h2><button id="voiceClose" type="button">Close</button></div>
+    <div class="panel-body">
+      <div id="voiceGroups" class="voice-groups"></div>
+      <div class="voice-original">
+        <button id="voiceOriginalToggle" class="voice-disclosure" type="button" aria-expanded="false" aria-controls="voiceOriginalList"><span>Original engine options</span><span id="voiceOriginalSummary"></span></button>
+        <div id="voiceOriginalList" class="voice-list" role="group" aria-label="Engine options" hidden></div>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="compact-panel" id="rateMenu" aria-labelledby="rateHeading">
+    <div class="panel-head"><h2 id="rateHeading">Speed</h2><button id="rateClose" type="button">Close</button></div>
+    <div class="panel-body rate-control">
+      <label for="readRate" class="visually-hidden">Reading speed</label>
+      <input id="readRate" type="range" min="90" max="300" step="5" value="180">
+      <output id="readRateValue" for="readRate">180 WPM / 1.00x</output>
+    </div>
+  </dialog>
+
+  <dialog class="inspector" id="inspector" aria-labelledby="settingsHeading">
+    <div class="panel-head"><h2 id="settingsHeading">Settings</h2><button id="inspectorClose" type="button">Close</button></div>
+    <div class="panel-body">
+      <details class="settings-section" id="dictationSettings" open><summary>Dictation</summary>      <section class="inspector-section" aria-label="Dictation controls">
+        <p id="dictationStatus" class="voice-status"></p>
         <div class="check-row">
           <input id="dictationEnabled" type="checkbox">
-          <label for="dictationEnabled">Dictation hotkey (hold <span id="dictationHotkey">the dictation key</span>)</label>
-        </div>
-        <div class="hotkeys" id="hotkeys">
-          <div class="hotkey-row">
-            <div class="hotkey-head"><span class="hotkey-name">Dictation key</span><span class="hotkey-sub">hold to talk</span></div>
-            <button class="hotkey-field" id="dictationKeyField" type="button" aria-label="Change the dictation key" aria-pressed="false">
-              <span class="keycaps" id="dictationKeyCaps"></span>
-              <span class="hotkey-prompt" id="dictationKeyPrompt" hidden>Press a key or a side mouse button</span>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-            </button>
-            <div class="hotkey-error" id="dictationKeyError" role="alert"></div>
-            <div class="hotkey-chips" id="dictationKeyChips" role="radiogroup" aria-label="Dictation key presets"></div>
-          </div>
-          <div class="hotkey-row">
-            <div class="hotkey-head"><span class="hotkey-name">Read selection</span><span class="hotkey-sub">press to read the highlighted text</span></div>
-            <button class="hotkey-field" id="selectionKeyField" type="button" aria-label="Change the read-selection shortcut" aria-pressed="false">
-              <span class="keycaps" id="selectionKeyCaps"></span>
-              <span class="hotkey-prompt" id="selectionKeyPrompt" hidden>Press a key combination</span>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-            </button>
-            <div class="hotkey-error" id="selectionKeyError" role="alert"></div>
-            <div class="hotkey-chips" id="selectionKeyChips" role="radiogroup" aria-label="Read selection presets"></div>
-          </div>
-          <div class="hotkey-hint" id="hotkeyHint">Changes apply right away while the helper is running.</div>
+          <label for="dictationEnabled">Enable dictation <span id="dictationHotkey" class="visually-hidden"></span></label>
         </div>
         <div class="row service-row">
           <span class="voice-status">Hotkey helper</span>
@@ -4768,7 +4236,7 @@ INDEX_HTML = r"""<!doctype html>
             <button id="nativeHelperReset" class="service-reset" type="button" title="Restart the hotkey helper">Reset</button>
           </div>
         </div>
-        <dl class="readiness" id="dictationReadiness"></dl>
+        <details class="settings-section"><summary>Permissions &amp; status</summary><dl class="readiness" id="dictationReadiness"></dl></details>
         <div class="mic-meter" id="dictationMeter" role="meter" aria-label="Microphone level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div></div></div>
         <div class="field">
           <label for="microphone">Microphone</label>
@@ -4780,8 +4248,35 @@ INDEX_HTML = r"""<!doctype html>
           <div id="dictationRecordingStatus"></div>
           <audio id="dictationRecordingAudio" controls preload="none"></audio>
         </div>
-      </section>
-      <section class="inspector-section" aria-labelledby="signalHeading">
+      </section></details>
+<details class="settings-section" id="shortcutSettings"><summary>Shortcuts</summary>        <div class="hotkeys" id="hotkeys">
+          <div class="hotkey-row">
+            <div class="hotkey-head"><span class="hotkey-name">Dictation key</span><span class="hotkey-sub" id="dictationGesture">hold to talk</span></div>
+            <button class="hotkey-field" id="dictationKeyField" type="button" aria-label="Change the dictation key" aria-pressed="false">
+              <span class="keycaps" id="dictationKeyCaps"></span>
+              <span class="hotkey-prompt" id="dictationKeyPrompt" hidden>Press a key or a side mouse button</span>
+            </button>
+            <div class="hotkey-error" id="dictationKeyError" role="alert"></div>
+            <div class="hotkey-chips" id="dictationKeyChips" role="radiogroup" aria-label="Dictation key presets"></div>
+          </div>
+          <div class="hotkey-row">
+            <div class="hotkey-head"><span class="hotkey-name">Read selection</span><span class="hotkey-sub">read highlighted text</span></div>
+            <button class="hotkey-field" id="selectionKeyField" type="button" aria-label="Change the read-selection shortcut" aria-pressed="false">
+              <span class="keycaps" id="selectionKeyCaps"></span>
+              <span class="hotkey-prompt" id="selectionKeyPrompt" hidden>Press a key combination</span>
+            </button>
+            <div class="hotkey-error" id="selectionKeyError" role="alert"></div>
+            <div class="hotkey-chips" id="selectionKeyChips" role="radiogroup" aria-label="Read selection presets"></div>
+          </div>
+          <div class="hotkey-hint" id="hotkeyHint">Changes apply right away while the helper is running.</div>
+        </div>
+</details>
+<details class="settings-section" id="engineSettings"><summary>Speech engines</summary>      <section class="inspector-section" aria-label="Speech engine status">
+
+        <dl class="readiness" id="engineStatus"></dl>
+        <div class="voice-status" id="voiceStatus"></div>
+      </section></details>
+<details class="settings-section" id="analysisSettings"><summary>Signal map</summary>      <section class="inspector-section" aria-labelledby="signalHeading">
         <div class="list-header">
           <h3 id="signalHeading">Signal map</h3>
           <button id="runAnalysis" type="button">Analyze</button>
@@ -4808,14 +4303,9 @@ INDEX_HTML = r"""<!doctype html>
         <div class="detail" id="analysisDetail"></div>
         <div class="kicker">Frequent terms</div>
         <div class="topic-map" id="topicMap"></div>
-      </section>
-      <section class="inspector-section" aria-labelledby="enginesHeading">
-        <h3 id="enginesHeading">Speech engines</h3>
-        <dl class="readiness" id="engineStatus"></dl>
-        <div class="voice-status" id="voiceStatus"></div>
-      </section>
-    </aside>
-  </div>
+      </section></details>
+    </div>
+  </dialog>
 
   <script>
     const state = {
@@ -4831,7 +4321,8 @@ INDEX_HTML = r"""<!doctype html>
       audioFileAction: "",
       importAction: "",
       nativeHelperAction: "",
-      inspectorOpen: localStorage.getItem("docReader.inspector") === "open",
+      readPending: false,
+      inspectorOpen: false,
       libraryOpen: false,
       activeView: localStorage.getItem("docReader.historyView") || "all",
       libraryQuery: localStorage.getItem("docReader.libraryQuery") || "",
@@ -4850,7 +4341,6 @@ INDEX_HTML = r"""<!doctype html>
     const libraryCountEl = $("libraryCount");
     const libraryTitleEl = $("libraryTitle");
     const librarySearchEl = $("librarySearch");
-    const scrimEl = $("scrim");
     const errorEl = $("error");
     const textEl = $("text");
     const itemViewEl = $("itemView");
@@ -4942,7 +4432,6 @@ INDEX_HTML = r"""<!doctype html>
     audioTimestampsEl.checked = localStorage.getItem("docReader.audioTimestamps") === "true";
     librarySearchEl.value = state.libraryQuery;
     textEl.value = localStorage.getItem("docReader.draft") || "";
-    setInspectorOpen(state.inspectorOpen, { persist: false });
 
     async function api(path, options = {}) {
       const response = await fetch(path, options);
@@ -5063,7 +4552,7 @@ INDEX_HTML = r"""<!doctype html>
       if (!failure) return text;
       const detail = failure[1];
       if (/network error|Max retries|Connection refused|timed out/i.test(detail)) {
-        return "Speech service is not reachable. Check Details for engine status.";
+        return "Speech service is not reachable. Open Settings for engine status.";
       }
       return `Playback failed: ${detail.slice(0, 140)}`;
     }
@@ -5073,6 +4562,8 @@ INDEX_HTML = r"""<!doctype html>
       const previousDictationCount = state.data && state.data.dictations ? state.data.dictations.length : 0;
       state.data = data;
       statusEl.textContent = friendlyStatus(data.status);
+      statusEl.hidden = !/failed|error|unavailable|unreachable|not reachable|warning|no .*(?:signal|speech)|could not|cannot|loading|downloading|starting|transcribing/i.test(statusEl.textContent);
+      statusEl.classList.toggle("bad", /failed|error|unreachable|not reachable/i.test(statusEl.textContent));
       document.body.dataset.state = data.running ? "reading" : (data.paused ? "paused" : "idle");
       renderVoice(data.tts || {});
       renderReadRate(data.settings || {});
@@ -5129,7 +4620,9 @@ INDEX_HTML = r"""<!doctype html>
         const active = state.activeView === view;
         button.classList.toggle("active", active);
         button.setAttribute("aria-selected", String(active));
-        button.textContent = `${label} ${count}`;
+        button.textContent = label;
+        button.tabIndex = active ? 0 : -1;
+        button.setAttribute("aria-label", `${label}, ${count} items`);
       }
       libraryTitleEl.textContent =
         state.activeView === "readings" ? "Readings" :
@@ -5151,7 +4644,7 @@ INDEX_HTML = r"""<!doctype html>
       const scrollTop = libraryEl.scrollTop;
       libraryEl.innerHTML = "";
       if (allItems.length === 0) {
-        libraryEl.appendChild(emptyCard("Nothing saved yet. Read some text, import a document, or dictate to build your library."));
+        libraryEl.appendChild(emptyCard("Nothing saved yet."));
         return;
       }
       if (filtered.length === 0) {
@@ -5162,6 +4655,7 @@ INDEX_HTML = r"""<!doctype html>
       for (const item of filtered.slice(0, state.libraryVisibleCount)) {
         libraryEl.appendChild(makeRow(item));
       }
+      if (!libraryEl.querySelector('.row-item[tabindex="0"]')) libraryEl.querySelector(".row-item")?.setAttribute("tabindex", "0");
       libraryEl.scrollTop = scrollTop;
     }
 
@@ -5233,8 +4727,9 @@ INDEX_HTML = r"""<!doctype html>
       renderLibrary(currentItems());
       renderWorkspace(currentItems());
       renderPlayback(state.data || {}, currentItems());
-      if (state.libraryOpen) setLibraryOpen(false, { restoreFocus: false });
-      if (focusWorkspace) $("workspaceSurface").focus();
+      const fromLibrary = state.libraryOpen;
+      if (fromLibrary) setLibraryOpen(false, { restoreFocus: false });
+      if (focusWorkspace || fromLibrary) $("workspaceSurface").focus();
     }
 
     function confirmDiscardEdit() {
@@ -5275,12 +4770,14 @@ INDEX_HTML = r"""<!doctype html>
       if (signature === state.workspaceSignature) return;
       state.workspaceSignature = signature;
 
+      $("workspace").dataset.mode = "saved";
+      newTextBtn.hidden = false;
       workspaceKindEl.textContent = kindLabel(item) + (whenLabel(item.created_at) ? ` · ${whenLabel(item.created_at)}` : "");
       workspaceTitleEl.textContent = workspaceTitleFor(item);
+      workspaceTitleEl.title = workspaceTitleEl.textContent;
       const metaParts = [];
       if (item.word_count) metaParts.push(`${numberLabel(item.word_count)} words`);
       if (item.source_meta?.transcription_requires_review) metaParts.push("Review transcript before using it");
-      if (item.kind === "document") metaParts.push(baseName(item.source_path));
       if (!isDictationItem(item)) {
         if (item.completed) metaParts.push("Finished reading");
         else if (Number(item.last_seconds || 0) > 0) metaParts.push(`Resumes at ${timeLabel(item.last_seconds)}`);
@@ -5301,7 +4798,7 @@ INDEX_HTML = r"""<!doctype html>
         itemViewEl.hidden = true;
         itemEditorEl.hidden = true;
         itemNoticeEl.hidden = false;
-        itemNoticeEl.textContent = `${baseName(item.source_path)} is read directly by the speech engine. A text preview is not available for this file type, but playback, pause, and resume work as usual.`;
+        itemNoticeEl.textContent = "Ready to read. Text preview unavailable for this file.";
         return;
       }
       itemNoticeEl.hidden = true;
@@ -5323,11 +4820,14 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function showDraftWorkspace() {
-      workspaceKindEl.textContent = "New text";
-      workspaceTitleEl.textContent = "Untitled";
+      $("workspace").dataset.mode = "draft";
+      newTextBtn.hidden = true;
+      workspaceKindEl.textContent = "";
+      workspaceTitleEl.textContent = "New text";
+      workspaceTitleEl.removeAttribute("title");
       workspaceMetaEl.textContent = textEl.value.trim()
-        ? `${numberLabel(textEl.value.trim().split(/\s+/).length)} words · draft is kept in this browser`
-        : "Paste or type, then press Read text.";
+        ? `${numberLabel(textEl.value.trim().split(/\s+/).length)} words`
+        : "";
       textEl.hidden = false;
       itemViewEl.hidden = true;
       itemEditorEl.hidden = true;
@@ -5418,7 +4918,7 @@ INDEX_HTML = r"""<!doctype html>
     function showCopied(button) {
       const original = button.innerHTML;
       button.classList.add("copied");
-      button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+      button.textContent = "Copied";
       button.setAttribute("aria-label", "Copied");
       window.setTimeout(() => {
         button.classList.remove("copied");
@@ -5433,7 +4933,7 @@ INDEX_HTML = r"""<!doctype html>
       const running = !!data.running;
       const paused = !!data.paused;
       if (!item) {
-        readTextBtn.textContent = "Read text";
+        readTextBtn.textContent = "Read";
         readTextBtn.disabled = false;
       } else if (item.playing) {
         readTextBtn.textContent = "Playing";
@@ -5442,12 +4942,19 @@ INDEX_HTML = r"""<!doctype html>
         readTextBtn.textContent = "Resume";
         readTextBtn.disabled = false;
       } else {
-        readTextBtn.textContent = item.completed ? "Read again" : (Number(item.last_seconds || 0) > 0 ? "Resume" : "Play");
+        readTextBtn.textContent = item.completed ? "Read again" : (Number(item.last_seconds || 0) > 0 ? "Resume" : "Read");
         readTextBtn.disabled = false;
       }
       pauseBtn.disabled = !running && !paused;
       pauseBtn.textContent = paused ? "Resume" : "Pause";
       stopBtn.disabled = !running && !paused;
+      pauseBtn.hidden = stopBtn.hidden = !running && !paused;
+      readTextBtn.hidden = !!item && (item.playing || item.paused);
+      $("playbackState").hidden = !running && !paused;
+      if (state.readPending) {
+        readTextBtn.disabled = true;
+        readTextBtn.textContent = "Starting";
+      }
 
       const active = items.find((entry) => entry.id === data.active_id);
       const activeTitle = active ? workspaceTitleFor(active) : "";
@@ -5508,7 +5015,7 @@ INDEX_HTML = r"""<!doctype html>
         heading.textContent = title;
         const list = document.createElement("div");
         list.className = "voice-list";
-        list.setAttribute("role", "listbox");
+        list.setAttribute("role", "group");
         list.setAttribute("aria-label", title);
         for (const voice of members) {
           list.appendChild(makeVoiceOption(voice));
@@ -5520,9 +5027,9 @@ INDEX_HTML = r"""<!doctype html>
         const row = document.createElement("button");
         row.type = "button";
         row.className = "voice-option";
-        row.setAttribute("role", "option");
+        row.setAttribute("aria-pressed", "false");
         row.dataset.backend = option.value;
-        row.innerHTML = '<svg class="check" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+
         const name = document.createElement("span");
         name.className = "voice-name";
         name.textContent = option.label;
@@ -5536,16 +5043,16 @@ INDEX_HTML = r"""<!doctype html>
       const row = document.createElement("button");
       row.type = "button";
       row.className = "voice-option";
-      row.setAttribute("role", "option");
+      row.setAttribute("aria-pressed", "false");
       row.dataset.voice = voice.id;
-      row.innerHTML = '<svg class="check" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+
       const text = document.createElement("span");
       const name = document.createElement("div");
       name.className = "voice-name";
-      name.textContent = voice.name + (voice.default ? " (default)" : "");
+      name.textContent = voice.name;
       const meta = document.createElement("div");
       meta.className = "voice-meta";
-      meta.textContent = `${voice.accent === "UK" ? "British" : "American"}, ${voice.gender}`;
+      meta.textContent = voice.gender;
       text.append(name, meta);
       const preview = document.createElement("button");
       preview.type = "button";
@@ -5566,20 +5073,20 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function playIcon() {
-      return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5v14l11-7z"/></svg>';
+      return "Listen";
     }
 
     function stopIcon() {
-      return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+      return "Stop";
     }
 
     function syncVoiceSelection() {
       const usesKokoro = voiceUi.kokoroBackends.includes(voiceUi.backend);
       for (const row of voiceMenuEl.querySelectorAll(".voice-option[data-voice]")) {
-        row.setAttribute("aria-selected", String(usesKokoro && row.dataset.voice === voiceUi.voice));
+        row.setAttribute("aria-pressed", String(usesKokoro && row.dataset.voice === voiceUi.voice));
       }
       for (const row of voiceMenuEl.querySelectorAll(".voice-option[data-backend]")) {
-        row.setAttribute("aria-selected", String(row.dataset.backend === voiceUi.backend));
+        row.setAttribute("aria-pressed", String(row.dataset.backend === voiceUi.backend));
       }
       const currentOption = voiceUi.options.find((o) => o.value === voiceUi.backend);
       voiceOriginalSummaryEl.textContent = currentOption ? currentOption.label : "";
@@ -5663,10 +5170,10 @@ INDEX_HTML = r"""<!doctype html>
 
     function setVoiceMenuOpen(open, { restoreFocus = false } = {}) {
       voiceUi.open = !!open;
-      voiceMenuEl.hidden = !voiceUi.open;
+      setPanelOpen(voiceMenuEl, voiceUi.open, voiceButtonEl, { restoreFocus });
       voiceButtonEl.setAttribute("aria-expanded", String(voiceUi.open));
       if (voiceUi.open) {
-        const selected = voiceMenuEl.querySelector('.voice-option[aria-selected="true"]:not([hidden])') || voiceMenuEl.querySelector(".voice-option");
+        const selected = voiceMenuEl.querySelector('.voice-option[aria-pressed="true"]:not([hidden])') || voiceMenuEl.querySelector(".voice-option");
         if (selected && !selected.closest("[hidden]")) selected.focus();
         else voiceMenuEl.querySelector(".voice-option")?.focus();
       } else {
@@ -5705,11 +5212,18 @@ INDEX_HTML = r"""<!doctype html>
       return `${rate} WPM / ${speed.toFixed(2)}x`;
     }
 
+    function updateRateButton() {
+      const speed = Number((normalizeReadRate(readRateEl.value) / 180).toFixed(2));
+      $("rateButton").textContent = `${speed}×`;
+      $("rateButton").setAttribute("aria-label", `Reading speed, ${speed} times`);
+    }
+
     function renderReadRate(settings) {
       const rate = normalizeReadRate(settings.read_rate || settings.readRate || 180);
       if (document.activeElement !== readRateEl) readRateEl.value = String(rate);
       readRateValueEl.value = readRateLabel(normalizeReadRate(readRateEl.value));
       readRateValueEl.textContent = readRateValueEl.value;
+      updateRateButton();
     }
 
     // ------------------------------------------------------------ dictation
@@ -5962,7 +5476,11 @@ INDEX_HTML = r"""<!doctype html>
       const mic = stt.microphone || {};
       const current = dictationState(stt);
       dictationChipEl.dataset.state = current.key;
-      dictationChipTextEl.textContent = current.label;
+      dictationChipTextEl.textContent = ["recording", "working", "starting", "error"].includes(current.key) ? current.label : "Dictation";
+      dictationChipEl.setAttribute("aria-label", `Dictation settings. ${current.label}`);
+      dictationChipEl.title = current.label;
+      $("dictationStatus").textContent = current.label;
+      $("dictationGesture").textContent = hotkeyUi.hotkeys.platform === "macos" ? "tap to talk" : "hold to talk";
 
       const backendLabel = stt.backend === "mac-whisper"
         ? "local speech"
@@ -6008,7 +5526,8 @@ INDEX_HTML = r"""<!doctype html>
       audioFileLabelEl.classList.toggle("busy", busy || !available);
       audioFileLabelEl.title = available
         ? "Transcribe an audio or video file into a Dictation"
-        : (stt.enabled ? `${stt.label || "Speech-to-text"} is not available right now` : "Turn on dictation in Details to transcribe audio files");
+        : (stt.enabled ? `${stt.label || "Speech-to-text"} is not available right now` : "Enable dictation in Settings to import audio.");
+      $("audioAvailability").textContent = available ? "" : audioFileLabelEl.title;
       const text = state.audioFileAction || state.importAction || "";
       if (audioFileStatusEl.textContent !== text) audioFileStatusEl.textContent = text;
     }
@@ -6048,7 +5567,7 @@ INDEX_HTML = r"""<!doctype html>
     function microphoneSummary(mic) {
       const chosen = mic.selected_name || "System Default";
       const live = mic.active_name || "";
-      if (live && live !== chosen && mic.native_helper_online) return `${chosen} → ${live}`;
+      if (live && live !== chosen && mic.native_helper_online) return `${chosen} (active: ${live})`;
       return chosen;
     }
 
@@ -6066,10 +5585,10 @@ INDEX_HTML = r"""<!doctype html>
         microphoneEl.dataset.signature = signature;
       }
       if (document.activeElement !== microphoneEl) microphoneEl.value = mic.selected_id || "";
-      const preferred = mic.preferred_name && mic.preferred_name !== mic.selected_name ? ` · preferred: ${mic.preferred_name}` : "";
-      const live = mic.active_name && mic.native_helper_online ? ` · live: ${mic.active_name}` : "";
-      const signal = mic.signal_warning ? " · no mic signal" : "";
-      microphoneStatusEl.textContent = `${mic.selected_name || "System Default"}${preferred}${live}${signal}`;
+      const preferred = mic.preferred_name && mic.preferred_name !== mic.selected_name ? `Preferred: ${mic.preferred_name}` : "";
+      const live = mic.active_name && mic.active_name !== mic.selected_name && mic.native_helper_online ? `Active: ${mic.active_name}` : "";
+      const signal = mic.signal_warning ? "No mic signal" : "";
+      microphoneStatusEl.textContent = [preferred, live, signal].filter(Boolean).join(" · ");
     }
 
     // ------------------------------------------------------------ signal map
@@ -6117,36 +5636,41 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     // ------------------------------------------------------------ panels
-    function setInspectorOpen(open, { persist = true, restoreFocus = false } = {}) {
-      state.inspectorOpen = !!open;
-      inspectorEl.hidden = !state.inspectorOpen;
-      inspectorToggleEl.setAttribute("aria-expanded", String(state.inspectorOpen));
-      if (persist) localStorage.setItem("docReader.inspector", state.inspectorOpen ? "open" : "closed");
-      updateScrim();
-      if (state.inspectorOpen && window.matchMedia("(max-width: 1180px)").matches) {
-        inspectorCloseEl.focus();
-      } else if (!state.inspectorOpen && restoreFocus) {
-        inspectorToggleEl.focus();
+    const panelOrigins = new WeakMap();
+    function setPanelOpen(panel, open, fallback, { restoreFocus = true } = {}) {
+      if (open && !panel.open) {
+        panelOrigins.set(panel, document.activeElement instanceof HTMLElement ? document.activeElement : fallback);
+        panel.showModal();
+      } else if (!open && panel.open) {
+        panel.close();
+        if (restoreFocus) (panelOrigins.get(panel) || fallback)?.focus();
       }
+    }
+
+    function setInspectorOpen(open, { restoreFocus = true } = {}) {
+      state.inspectorOpen = !!open;
+      if (!open) stopHotkeyRecording();
+      setPanelOpen(inspectorEl, state.inspectorOpen, inspectorToggleEl, { restoreFocus });
+      inspectorToggleEl.setAttribute("aria-expanded", String(state.inspectorOpen));
+      dictationChipEl.setAttribute("aria-expanded", String(state.inspectorOpen));
     }
 
     function setLibraryOpen(open, { restoreFocus = true } = {}) {
       state.libraryOpen = !!open;
-      librarySidebarEl.classList.toggle("open", state.libraryOpen);
+      setPanelOpen(librarySidebarEl, state.libraryOpen, libraryToggleEl, { restoreFocus });
       libraryToggleEl.setAttribute("aria-expanded", String(state.libraryOpen));
-      libraryToggleEl.setAttribute("aria-label", state.libraryOpen ? "Hide library" : "Show library");
-      updateScrim();
-      if (state.libraryOpen) {
-        librarySearchEl.focus();
-      } else if (restoreFocus && window.matchMedia("(max-width: 1023px)").matches) {
-        libraryToggleEl.focus();
-      }
+      if (state.libraryOpen) librarySearchEl.focus();
     }
 
-    function updateScrim() {
-      const narrowInspector = state.inspectorOpen && window.matchMedia("(max-width: 1180px)").matches;
-      const narrowLibrary = state.libraryOpen && window.matchMedia("(max-width: 1023px)").matches;
-      scrimEl.hidden = !(narrowInspector || narrowLibrary);
+    function setImportOpen(open) {
+      setPanelOpen($("importMenu"), open, $("importToggle"));
+      $("importToggle").setAttribute("aria-expanded", String(open));
+    }
+
+    function setRateOpen(open) {
+      setPanelOpen($("rateMenu"), open, $("rateButton"));
+      $("rateButton").setAttribute("aria-expanded", String(open));
+      if (open) readRateEl.focus();
     }
 
     // ------------------------------------------------------------ actions
@@ -6158,13 +5682,14 @@ INDEX_HTML = r"""<!doctype html>
         const data = await api("/api/state");
         if (!state.dictationSettingPending && revision === state.settingsRevision) render(data);
       } catch (error) {
-        errorEl.textContent = `Doc Reader web app is not responding: ${error.message}`;
+        errorEl.textContent = `Read Docs is not responding: ${error.message}`;
       } finally {
         state.refreshPending = false;
       }
     }
 
     readTextBtn.addEventListener("click", async () => {
+      if (state.readPending) return;
       try {
         errorEl.textContent = "";
         const item = selectedItem();
@@ -6175,16 +5700,27 @@ INDEX_HTML = r"""<!doctype html>
             textEl.focus();
             return;
           }
-          render(await api("/api/text", {
+          state.readPending = true;
+          renderPlayback(state.data || {}, currentItems());
+          const payload = await api("/api/text", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ label: "Text", text })
-          }));
+          });
+          render(payload);
+          if (payload.active_id) selectItem(payload.active_id);
+          if (!pauseBtn.hidden) pauseBtn.focus();
           return;
         }
+        state.readPending = true;
+        renderPlayback(state.data || {}, currentItems());
         render(await api(`/api/items/${encodeURIComponent(item.id)}/play`, { method: "POST" }));
+        if (!pauseBtn.hidden) pauseBtn.focus();
       } catch (error) {
         errorEl.textContent = error.message;
+      } finally {
+        state.readPending = false;
+        renderPlayback(state.data || {}, currentItems());
       }
     });
 
@@ -6203,6 +5739,7 @@ INDEX_HTML = r"""<!doctype html>
       try {
         errorEl.textContent = "";
         render(await api("/api/stop", { method: "POST" }));
+        readTextBtn.focus();
       } catch (error) {
         errorEl.textContent = error.message;
       }
@@ -6231,6 +5768,7 @@ INDEX_HTML = r"""<!doctype html>
     fileEl.addEventListener("change", async () => {
       const file = fileEl.files && fileEl.files[0];
       if (!file) return;
+      setImportOpen(false);
       const body = new FormData();
       body.append("file", file);
       try {
@@ -6255,6 +5793,7 @@ INDEX_HTML = r"""<!doctype html>
     audioFileEl.addEventListener("change", async () => {
       const file = audioFileEl.files && audioFileEl.files[0];
       if (!file) return;
+      setImportOpen(false);
       const body = new FormData();
       body.append("file", file);
       try {
@@ -6468,40 +6007,92 @@ INDEX_HTML = r"""<!doctype html>
     });
 
     libraryToggleEl.addEventListener("click", () => setLibraryOpen(!state.libraryOpen));
+    $("libraryClose").addEventListener("click", () => setLibraryOpen(false));
     inspectorToggleEl.addEventListener("click", () => setInspectorOpen(!state.inspectorOpen));
-    inspectorCloseEl.addEventListener("click", () => setInspectorOpen(false, { restoreFocus: true }));
-    dictationChipEl.addEventListener("click", () => setInspectorOpen(true));
-    scrimEl.addEventListener("click", () => {
-      if (state.libraryOpen) setLibraryOpen(false);
-      if (state.inspectorOpen && window.matchMedia("(max-width: 1180px)").matches) setInspectorOpen(false, { restoreFocus: true });
+    inspectorCloseEl.addEventListener("click", () => setInspectorOpen(false));
+    dictationChipEl.addEventListener("click", () => {
+      $("dictationSettings").open = true;
+      setInspectorOpen(true);
     });
-    window.addEventListener("resize", updateScrim);
+    $("importToggle").addEventListener("click", () => setImportOpen(true));
+    $("importClose").addEventListener("click", () => setImportOpen(false));
+    $("rateButton").addEventListener("click", () => setRateOpen(true));
+    $("rateClose").addEventListener("click", () => setRateOpen(false));
+
+    const panelClosers = [
+      [librarySidebarEl, () => setLibraryOpen(false)],
+      [inspectorEl, () => setInspectorOpen(false)],
+      [voiceMenuEl, () => setVoiceMenuOpen(false, { restoreFocus: true })],
+      [$("importMenu"), () => setImportOpen(false)],
+      [$("rateMenu"), () => setRateOpen(false)]
+    ];
+    for (const [panel, close] of panelClosers) {
+      const message = document.createElement("div");
+      message.className = "panel-error";
+      message.setAttribute("role", "alert");
+      panel.appendChild(message);
+      panel.addEventListener("cancel", (event) => {
+        event.preventDefault();
+        if (hotkeyUi.recording) stopHotkeyRecording();
+        else close();
+      });
+      panel.addEventListener("keydown", (event) => {
+        const { key: pressed } = event;
+        if (pressed !== "Tab" || hotkeyUi.recording) return;
+        const controls = Array.from(panel.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, a[href], [tabindex]'))
+          .filter((control) => {
+            if (control.tabIndex < 0 || !control.getClientRects().length || control.closest("[hidden]")) return false;
+            for (let ancestor = control.parentElement; ancestor && ancestor !== panel; ancestor = ancestor.parentElement) {
+              if (ancestor.tagName === "DETAILS" && !ancestor.open && !ancestor.querySelector(":scope > summary")?.contains(control)) return false;
+            }
+            return true;
+          });
+        const first = controls[0], last = controls[controls.length - 1];
+        if (!first) return;
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault(); last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault(); first.focus();
+        }
+      });
+      let backdropStart = false;
+      const outside = (event) => {
+        const rect = panel.getBoundingClientRect();
+        return event.target === panel && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom);
+      };
+      panel.addEventListener("pointerdown", (event) => { backdropStart = outside(event); });
+      panel.addEventListener("click", (event) => {
+        if (backdropStart && outside(event)) close();
+        backdropStart = false;
+      });
+    }
+    // A modal makes the canvas inert. Show request errors in the active panel too.
+    new MutationObserver(() => {
+      for (const [panel] of panelClosers) panel.querySelector(".panel-error").textContent = panel.open ? errorEl.textContent : "";
+    }).observe(errorEl, { childList: true, characterData: true, subtree: true });
+
+    const filterTabs = [showAllBtn, showReadingsBtn, showDictationsBtn, showClawdadBtn];
+    for (const [index, tab] of filterTabs.entries()) {
+      tab.addEventListener("keydown", (event) => {
+        const { key: pressed } = event;
+        const next = pressed === "ArrowRight" ? (index + 1) % filterTabs.length
+          : pressed === "ArrowLeft" ? (index + filterTabs.length - 1) % filterTabs.length
+          : pressed === "Home" ? 0 : pressed === "End" ? filterTabs.length - 1 : -1;
+        if (next < 0) return;
+        event.preventDefault();
+        filterTabs[next].click();
+        filterTabs[next].focus();
+      });
+    }
 
     document.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape") return;
-      if (hotkeyUi.recording) return; // the recorder handles its own Escape
-      if (voiceUi.open) {
-        event.preventDefault();
-        setVoiceMenuOpen(false, { restoreFocus: true });
-        return;
-      }
-      if (state.editing) {
+      const { key: pressed } = event;
+      if (pressed !== "Escape" || hotkeyUi.recording || document.querySelector("dialog[open]")) return;
+      if (state.editing && !state.editingSaving) {
         event.preventDefault();
         exitEditMode();
         editItemBtn.focus();
-        return;
       }
-      if (state.libraryOpen && window.matchMedia("(max-width: 1023px)").matches) {
-        event.preventDefault();
-        setLibraryOpen(false);
-        return;
-      }
-      if (state.inspectorOpen && window.matchMedia("(max-width: 1180px)").matches) {
-        event.preventDefault();
-        setInspectorOpen(false, { restoreFocus: true });
-        return;
-      }
-      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     });
 
     refresh();

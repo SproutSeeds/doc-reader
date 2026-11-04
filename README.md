@@ -1,6 +1,6 @@
-# Doc Reader
+# Read Docs
 
-Doc Reader reads documents and selected text aloud, turns speech into text,
+Read Docs reads documents and selected text aloud, turns speech into text,
 and keeps the results in a local Library. It includes a macOS menu-bar app,
 a Windows tray helper, and a shared web workspace.
 
@@ -9,7 +9,7 @@ by [Aaron Tate](https://github.com/AaronTateDev) in his
 [Windows branch](https://github.com/AaronTateDev/doc-reader-fork/tree/windows-support).
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/SproutSeeds/doc-reader/main/docs/readme-animation.svg" alt="Doc Reader: document reading, dictation, Library, and Signal Map" width="760">
+  <img src="https://raw.githubusercontent.com/SproutSeeds/doc-reader/main/docs/read-docs-workspace.png" alt="Read Docs reading workspace with a centered canvas and glass playback controls" width="760">
 </p>
 
 Kokoro and Whisper run locally by default. Optional remote speech and analysis
@@ -33,9 +33,9 @@ Maintained by SproutSeeds. Research stewardship: Fractal Research Group ([frg.ea
 - Supports pause/resume, active-field dictation insertion, and selectable speech
   backends.
 
-## Desktop downloads (0.6.1 preview)
+## Desktop downloads (0.6.2 preview)
 
-[Download Doc Reader for Mac or Windows](https://frg.earth/read-docs).
+[Download Read Docs for Mac or Windows](https://frg.earth/read-docs).
 Choose Apple silicon, Intel Mac, or Windows x64. Mac users drag the app into
 Applications; Windows users run the installer. Python, speech dependencies,
 FFmpeg and eSpeak are included. Node, npm, a terminal and developer tools are

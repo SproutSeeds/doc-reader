@@ -935,7 +935,7 @@ private final class ReaderWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "Doc Reader"
+        window.title = "Read Docs"
         window.minSize = NSSize(width: 600, height: 520)
         window.isReleasedWhenClosed = false
         super.init(window: window)
@@ -1224,7 +1224,7 @@ private final class PreferencesWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "Doc Reader Settings"
+        window.title = "Read Docs Settings"
         window.isReleasedWhenClosed = false
         super.init(window: window)
         buildUI()
@@ -1542,14 +1542,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
     private func buildMenu() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem = item
-        item.button?.image = NSImage(systemSymbolName: "doc.text.fill", accessibilityDescription: "Doc Reader")
+        item.button?.image = NSImage(systemSymbolName: "doc.text.fill", accessibilityDescription: "Read Docs")
         item.button?.imagePosition = .imageOnly
 
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.delegate = self
-        menu.addItem(NSMenuItem(title: "Open DocReader Page", action: #selector(openReader), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Read Clipboard in DocReader", action: #selector(readClipboard), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Open Read Docs", action: #selector(openReader), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Read Clipboard", action: #selector(readClipboard), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Read Selected Text (Right Command or Command-L)", action: #selector(readSelectedText), keyEquivalent: ""))
         menu.addItem(pauseMenuItem)
         menu.addItem(stopMenuItem)
@@ -2291,7 +2291,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
                     } else {
                         self.dictationGestureActive = false
                         self.dictationLatchedByRapidRelease = false
-                        self.statusMenuItem.title = "Speech-to-text is off. Enable it in the Doc Reader menu or page."
+                        self.statusMenuItem.title = "Dictation is off. Enable it in Read Docs Settings."
                         self.logDictation("option ignored; dictation disabled")
                         self.showRecordingOverlay(text: "Speech-to-text is off")
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -2481,7 +2481,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate
                     microphoneID: recordedMicrophoneID
                 )
                 self.showRecordingOverlay(text: "No mic signal")
-                self.statusMenuItem.title = "No microphone signal. Check mute or choose an input on the Doc Reader page."
+                self.statusMenuItem.title = "No microphone signal. Check mute or choose an input in Read Docs Settings."
                 self.lastDictationEvent = "no microphone signal detected"
                 self.logDictation(
                     String(

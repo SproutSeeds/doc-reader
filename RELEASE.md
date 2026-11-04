@@ -1,5 +1,26 @@
 # Release Checklist
 
+## 0.6.2 desktop preview
+
+Refines the shared Read Docs workspace around a centered reading canvas and a
+compact glass playback bar. Library, imports, voice selection, speed and settings
+open as focused panels with text controls, visible Close actions and keyboard
+focus containment. Dictation, shortcuts, speech diagnostics and Signal Map remain
+available in Settings. Drafts, saved edits, transcription review notices and the
+existing local Kokoro/Whisper engines are preserved. Read now opens the saved
+copy of a draft while retaining the original draft for later use.
+
+The Mac menu and Windows tray use the Read Docs name. Existing application bundle
+paths, installer identity and user data directories remain compatible.
+
+Browser regression checks use an isolated library and simulated speech:
+`python tests/serve_workspace_preview.py`, then
+`node tests/workspace-browser.mjs` with an available Playwright installation
+(`PLAYWRIGHT_MODULE` and `CHROME_PATH` can select existing tooling). These checks
+cover navigation, draft persistence, editing, imports, voice/speed settings,
+request failures, playback transitions and responsive light/dark layouts.
+Physical microphone, system hotkey and speech-quality checks remain separate.
+
 ## 0.6.1 desktop preview
 
 Resolves the Intel Mac inference crash caused by duplicate OpenMP runtimes in
