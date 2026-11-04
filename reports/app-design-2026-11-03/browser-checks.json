@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "checks": [
+    "Quiet initial workspace and text-only controls",
+    "Draft survives reload without changing storage keys",
+    "Library search, keyboard filters, selection and workspace focus",
+    "Copy, edit, panel Escape, save, focus restoration and draft preservation",
+    "Read, pause, resume and stop use existing API routes (simulated audio)",
+    "Every panel has Close, Escape, contained focus and correct return focus",
+    "Voice sample cleanup, voice selection and speed persistence",
+    "Action errors stay visible in the active modal and recover",
+    "Document and audio imports, timestamp preference and selected result",
+    "Shortcut capture cancellation and clear disabled-audio condition",
+    "Seven window sizes/themes: centered controls, contained panels, no horizontal overflow or browser errors"
+  ],
+  "errors": [],
+  "scope": "Isolated library; simulated playback and transcription. Native microphone/hotkeys and audio quality are outside this browser test."
+}

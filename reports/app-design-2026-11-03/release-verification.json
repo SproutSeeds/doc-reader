@@ -1,0 +1,67 @@
+{
+  "status": "PASS",
+  "source_commit": "0ff4899281c9576094f4abf5e2d6f9349efbe3d8",
+  "tag": "v0.6.2",
+  "release_url": "https://github.com/SproutSeeds/doc-reader/releases/tag/v0.6.2",
+  "ci_run": "https://github.com/SproutSeeds/doc-reader/actions/runs/41776604509",
+  "mac": [
+    {
+      "architecture": "arm64",
+      "notarization_id": "705f1b6c-6698-4abc-996c-0a99969f74fa",
+      "notarization_status": "Accepted",
+      "stapled": true,
+      "gatekeeper": "accepted"
+    },
+    {
+      "architecture": "intel",
+      "notarization_id": "dff2389b-a59a-4bf9-a852-2514654eab3f",
+      "notarization_status": "Accepted",
+      "stapled": true,
+      "gatekeeper": "accepted"
+    }
+  ],
+  "windows_signing": "unsigned preview",
+  "downloads": [
+    {
+      "name": "Doc-Reader-0.6.2-macOS-Apple-Silicon.dmg",
+      "status": 200,
+      "bytes": 452739203,
+      "sha256": "84331df2f9004bca81bec1d8883da82e38a91aeb8ae699acdfa4e53fa489cf4b",
+      "public_download": "PASS"
+    },
+    {
+      "name": "Doc-Reader-0.6.2-macOS-Intel.dmg",
+      "status": 200,
+      "bytes": 567567409,
+      "sha256": "c9eeb587f0de9dea8c79fc7628a649bc77194688501d92bc11f96b088bfd03e0",
+      "public_download": "PASS"
+    },
+    {
+      "name": "Doc-Reader-0.6.2-Windows-x64-Setup.exe",
+      "status": 200,
+      "bytes": 585949660,
+      "sha256": "b938ff18ef5c504376c9c418c45e4ef216f21f464f228198e963f6becc48ab5b",
+      "public_download": "PASS"
+    }
+  ],
+  "website": {
+    "url": "https://frg.earth/read-docs",
+    "deployment_id": "dpl_7KeUgxY2PDccTgviHP7GmNFENCF1",
+    "live_checks": "PASS",
+    "browser_checks": "PASS"
+  },
+  "installed_mac": {
+    "status": "PASS",
+    "library_files_preserved": 1679,
+    "changed_existing_files": [],
+    "page_matches_source": true,
+    "page_sha256": "dc0a6aea92743865abe2315cf2be478fa6750b324d835f2f055be38ae19539bd",
+    "voice_count": 28,
+    "speech_health_ok": true,
+    "stt_ready": true,
+    "native_helper_online": true
+  },
+  "limitations": [
+    "Physical microphone, global shortcuts, text insertion and sleep/wake acceptance remain separate from these automated checks."
+  ]
+}
